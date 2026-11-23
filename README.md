@@ -1,0 +1,69 @@
+# Tessera Health
+
+A clickable hospital management system (HMS) prototype for pitching, with a native iOS app.
+One patient record, 20 role-based accounts, and about 45 modules covering clinical care, diagnostics,
+front office, revenue cycle, quality, leadership, administration and a patient portal.
+
+> **Synthetic data only. Not for clinical use.** Nothing is real-time. All changes stay on the
+> viewer's device (browser localStorage), and **Reset demo data** on the entry screen starts over.
+
+## What's in the repo
+
+| Folder | What it is |
+|---|---|
+| [`tessera/`](tessera) | The web app: plain HTML, CSS and JavaScript, no build step or dependencies |
+| [`ios/`](ios) | SwiftUI + WKWebView shell that bundles the web app into an offline iPhone/iPad app |
+
+## Run the web app
+
+```bash
+cd tessera && python3 -m http.server 8765
+```
+
+Open http://localhost:8765 and tap any demo account, then **Approve**. Narrow the window (or open it
+on a phone) to get the mobile layout: bottom tab bar, "Needs you" cards and card-style tables.
+
+## Run the iOS app
+
+Requires Xcode 15 or later (iOS 17 deployment target).
+
+1. Open `ios/TesseraHealth.xcodeproj`.
+2. Pick a simulator and press Run (⌘R).
+
+A build phase copies `tessera/` into the app on every build, so web changes show up on the next run.
+To install on a real iPhone or share through TestFlight, see [ios/README.md](ios/README.md).
+
+## Design principles
+
+- **Least privilege by default.** Each role sees only what its job needs. Billing, admins and
+  radiologists can't open charts, and leadership sees aggregates only.
+- **Every record access is audited** in an append-only, hash-chained log that can be verified.
+- **No PHI in plaintext where it isn't needed.** Audit logs, quality lists and privacy alerts show
+  patient tokens until a stated purpose is logged.
+- **Break-the-glass** for out-of-scope emergencies, with a reason and an after-the-fact review.
+- **Two-person rules** for role changes and blood issue. Nobody approves their own request.
+- **Safety gates** such as allergy checks, controlled-drug confirmation, WHO surgical checklist and
+  closed-loop critical results.
+
+## Demo accounts
+
+Every account signs in with one tap on the entry screen. The full list, with what each role can
+reach, is in [tessera/README.md](tessera/README.md#demo-accounts).
+
+| Area | Accounts |
+|---|---|
+| Clinical | Dr. Elena Marsh (cardiology), Dr. Samuel Okafor (general medicine), Dr. Farid Haddad (ER), Dr. Caroline Weiss (surgery), Grace Lin RN (cardiac ICU), Jamal Rivers RN (peri-op), Nadia Kowal PharmD |
+| Diagnostics | Ben Okoro (lab), Dr. Hannah Cho (pathology), Dr. Victor Lund (radiology) |
+| Front office & revenue | Sofia Alvarez (front desk), Marcus Bell (billing), Rita Gomez (insurance) |
+| Quality, leadership & admin | Tomás Reyes (quality), Catherine Moore (CEO), Dana Whitfield and Leo Brandt (admins), Noah Kim (platform) |
+| Patient | Radha Bhatt (portal) |
+
+## Tests
+
+Two browser-run suites cover the app. Run them in the browser console at http://localhost:8765 after
+**Reset demo data**:
+
+```js
+await import('/tests/usecases.js?' + Date.now()).then((m) => m.run())   // 63 end-to-end workflows
+await import('/tests/sweep.js?' + Date.now()).then((m) => m.run())      // every page, action, form and dialog
+```
