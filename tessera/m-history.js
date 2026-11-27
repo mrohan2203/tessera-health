@@ -55,9 +55,9 @@
       pts = pts.map((x) => ({ at: x.at, v: +x.v.toFixed(dp), src: 'Laboratory' })).concat([{ at: at0, v: v0, src: l.outside ? 'Outside record' : 'Laboratory', current: true }]);
       // Results released by the lab since the seed (for example a repeat potassium) come last
       (S().labOrders || []).filter((o) => o.patient === p.id && o.status === 'Released' && o.test.replace(/\s*\(.*\)$/, '').toLowerCase() === l.test.toLowerCase() && num(o.value) != null)
-        .forEach((o) => pts.push({ at: Date.now() - o.mOff * 60000 + 20 * 60000, v: num(o.value), src: `Lab order ${o.id}` }));
+        .forEach((o) => pts.push({ at: Date.now() - o.mOff * 60000 + 20 * 60000, v: num(o.value), src: `Lab order ${o.id}`, current: true, ownFlag: o.flag }));
       pts.sort((a, b) => a.at - b.at);
-      pts.forEach((x) => { x.flag = flagFor(x.v, l.ref); x.raw = x.v.toFixed(dp); });
+      pts.forEach((x) => { x.flag = x.ownFlag != null ? (x.ownFlag || '') : x.current ? (l.flag || '') : flagFor(x.v, l.ref); x.raw = x.v.toFixed(dp); }); // the lab's own flag wins for the reported value
       out.push({ test: l.test, unit: l.unit, ref: l.ref, loinc: l.loinc, dp, pts });
     });
     return out;

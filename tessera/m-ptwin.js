@@ -575,7 +575,7 @@
   }
 
   /* ---------- Views ---------- */
-  const VIEWS = [['overview', 'Overview'], ['anatomy', 'Anatomy 3D'], ['physiology', 'Physiology'], ['forecast', 'Forecast'], ['pk', 'Drug levels'], ['meds', 'Medications'], ['scenarios', 'Scenarios'], ['sources', 'Sources']];
+  const VIEWS = [['overview', 'Overview'], ['ask', 'Ask'], ['anatomy', 'Anatomy 3D'], ['physiology', 'Physiology'], ['forecast', 'Forecast'], ['pk', 'Drug levels'], ['meds', 'Medications'], ['scenarios', 'Scenarios'], ['sources', 'Sources']];
 
   function leversHtml({ p, lv, on, rs, opt }) {
     const rname = (id) => (rs.find((r) => r.id === id) || { name: id }).name.split(' · ')[0];
@@ -973,9 +973,225 @@
   T.CHANGE['anat-layer'] = (v, el) => { if (el.checked) AV.layers.add(el.dataset.l); else AV.layers.delete(el.dataset.l); AV.iso = null; anatApply(); };
   T.CHANGE['anat-overlay'] = (v, el) => { AV.overlay = el.checked; anatApply(); };
 
+  /* ---------- Ask the twin ----------
+     Questions about this patient, answered only from a numbered list of facts drawn from the record
+     (labs with history, vitals, medications, problems, allergies, infections, orders, scores, risks,
+     the 72-hour forecast and anatomy findings). Free-text notes and identifiers are never included.
+     On the published link Claude answers; elsewhere a rule engine answers from the same facts. Every
+     claim cites its fact, uncited answers are flagged, and every question is audited. */
+  const ASK_LINK = { lab: 'results', vitals: 'vitals', med: 'meds', problem: 'overview', allergy: 'overview', infection: 'overview', order: 'orders', result: 'results' };
+  const ASK_ICON = { lab: '⚗', vitals: '♥', med: '℞', problem: '◆', allergy: '⚠', infection: '✚', order: '☰', result: '!', score: '∑', risk: '▲', forecast: '⟶', anatomy: '◎', twin: '◇' };
+  const SYS_WORDS = { neuro: /brain|neuro|nerve|confus|stroke|seiz/, heart: /heart|cardi|coronar|rhythm|atri|arrhythm|\baf\b|blood pressure|\bbp\b|aort/, lungs: /lung|breath|resp|oxygen|spo2|airway/, gi: /liver|gut|stomach|bowel|\bgi\b|hepat/, kidney: /kidney|renal|ckd|potassium|creatinine|egfr|urin|bladder/, endo: /diabet|glucose|sugar|a1c|pancrea|endocr|thyroid/, blood: /blood|bleed|inr|clot|warfarin|anticoag|infect|sepsis/, msk: /bone|joint|spine|knee|hip/ };
+  function askFacts(ctx) {
+    const { p, lv, on, opt, rs, sim, base, ev, evB } = ctx;
+    const F = []; const add = (kind, text, extra) => { const f = Object.assign({ id: 'F' + (F.length + 1), kind, text }, extra || {}); F.push(f); return f; };
+    const when = (at) => (T.hist ? T.hist.fmtT(at) : '');
+    add('problem', `Age ${p.age}, ${p.sex === 'F' ? 'female' : 'male'}; ${/admitted/i.test(p.status) ? `admitted to ${p.unit}` : p.status}; ${p.code}`, { sys: [] });
+    p.problems.forEach((x) => add('problem', `Active problem: ${x}`, { sys: SYSTEMS.filter((s) => s.prob.test(x)).map((s) => s.id) }));
+    add('allergy', p.allergiesUnknown ? 'Allergies: unknown (not yet documented)' : p.allergies.length ? `Allergies: ${p.allergies.map((a) => `${a.agent} (${a.reaction}, ${a.severity.toLowerCase()})`).join('; ')}` : 'Allergies: none known');
+    if (T.hist) {
+      const vs = T.hist.vitals(p), last = vs[vs.length - 1], dayAgo = vs.slice().reverse().find((x) => last.at - x.at >= 20 * 3600e3);
+      const vt = (x) => `HR ${x.hr}, BP ${x.sbp}/${x.dbp}, RR ${x.rr}, SpO₂ ${x.spo2}%, temp ${x.temp} °F, NEWS2 ${x.news}`;
+      add('vitals', `Latest vitals (${when(last.at)}, ${last.by || 'nursing'}): ${vt(last)}`, { at: last.at, sys: ['heart', 'lungs'], latest: last });
+      if (dayAgo) add('vitals', `Vitals about 24 h earlier (${when(dayAgo.at)}): ${vt(dayAgo)}`, { at: dayAgo.at, sys: ['heart', 'lungs'], dayAgo });
+      T.hist.labs(p).forEach((s) => {
+        const c = s.pts[s.pts.length - 1], pv = s.pts[s.pts.length - 2];
+        const trend = s.pts.length > 2 ? `; ${s.pts.length} results ${s.pts.map((x) => x.raw).join(' → ')} since ${when(s.pts[0].at).split(',')[0]}` : '';
+        add('lab', `${s.test} ${c.raw} ${s.unit || ''} (${c.flag || 'normal'}, reference ${s.ref || '—'}) on ${when(c.at)}${pv ? `; previous ${pv.raw} on ${when(pv.at)}` : ''}${trend}`, { at: c.at, test: s.test, series: s, sys: SYSTEMS.filter((sy) => sy.labs.test(s.test)).map((sy) => sy.id) });
+      });
+    } else p.labs.forEach((l) => add('lab', `${l.test} ${l.value} ${l.unit || ''} (${l.flag || 'normal'}, reference ${l.ref})`, { test: l.test }));
+    medRows(p, ctx).forEach((r) => {
+      const fx = Object.entries(r.fx).map(([k, v]) => `${(SYSTEMS.find((s) => s.id === k) || {}).name}: ${v}`).join('; ');
+      const cls = [ARB.test(r.drug) && 'raises potassium (ARB/ACE inhibitor)', KSPARE.test(r.drug) && 'raises potassium', ANTICOAG.test(r.drug) && 'anticoagulant', ANTIPLT.test(r.drug) && 'antiplatelet', NSAID.test(r.drug) && 'NSAID'].filter(Boolean).join(', ');
+      add('med', `${r.drug} ${r.dose} · source ${r.src} · status ${r.status}${r.simHeld ? ' (held in the current simulation)' : ''}${cls ? ` · ${cls}` : ''}${fx ? ` · effects: ${fx}` : ''}`, { drug: r.drug, held: r.held, sys: Object.keys(r.fx) });
+    });
+    (S().hai || []).filter((h) => h.patient === p.id).forEach((h) => add('infection', `${h.type}: ${h.organism}; ${h.device || ''}; treatment ${h.tx}; ${h.status}`, { sys: ['kidney', 'blood'] }));
+    (S().isolation || []).filter((i) => i.patient === p.id).forEach((i) => add('infection', `${i.type} precautions: ${i.reason}`));
+    (S().orders || []).filter((o) => o.patient === p.id && !/discontinued|completed/i.test(o.status)).forEach((o) => add('order', `${o.type} order: ${o.text} (${o.priority}, ${o.status})`, { sys: [] }));
+    (S().results || []).filter((r) => r.patient === p.id).forEach((r) => add('result', `Critical result ${r.test} ${r.value}: ${r.state}${r.state === 'New' ? ' (not yet acknowledged)' : ''}`));
+    scores(p).forEach((s) => add('score', `${s.k} ${s.v} (${s.sub}); ${s.why}`, { sys: s.k === 'eGFR' || s.k === 'CrCl' ? ['kidney'] : s.k.includes('VASc') || s.k === 'MAP' ? ['heart'] : s.k === 'HAS-BLED' ? ['blood'] : [] }));
+    SYSTEMS.forEach((s) => { const st = systemState(p, s); if (st.level) add('twin', `Twin status of ${s.name}: ${LVL[st.level]} because ${st.ev.map(([k, t]) => `${k.toLowerCase()} ${t}`).join('; ')}`, { sys: [s.id], level: st.level }); });
+    rs.forEach((r) => { const w = riskWith(r, lv, on, opt); add('risk', `Risk ${r.name}: ${r.base}% from the record${w.delta ? `; ${w.sim}% with the current simulated levers` : ''}. Drivers: ${r.drivers.join('; ')}`, { risk: r.id, base: r.base }); });
+    const fs = METRICS(p).filter((m) => base[m.id] && ['k', 'inr', 'cr'].includes(m.id));
+    if (fs.length) add('forecast', `Forecast if nothing changes (illustrative model): ${fs.map((m) => `${m.name} ${m.f(base[m.id][0])} now, ${m.f(base[m.id][24])} at +24 h, ${m.f(base[m.id][H])} at +72 h`).join('; ')}`, { sys: ['kidney', 'blood'] });
+    evB.slice(0, 5).forEach((e) => add('forecast', `Forecast event if nothing changes: ${e.text} at ${hLabel(e.h)}`, { cls: e.cls }));
+    if (lv.some((l) => on.has(l.id) !== !!l.pre)) ev.slice(0, 4).forEach((e) => add('forecast', `Forecast event with the current simulated levers: ${e.text} at ${hLabel(e.h)}`, { cls: e.cls, sim: true }));
+    interactions(p, medRows(p, ctx)).forEach(([c, a, b]) => add('med', `Caution: ${a}. ${b}`, { caution: c }));
+    ANAT_RULES.forEach((r) => { if (r.when(p)) add('anatomy', `Anatomy finding: ${r.label} (${r.why(p, { h: 0, sim: base, k: base.k ? base.k[0] : null, lv: base.levels[0] }) || ''})`); });
+    F.forEach((f) => { f.terms = f.text.toLowerCase(); });
+    return F;
+  }
+  const LAB_WORDS = [[/potassium|\bk\b/, /^potassium/i], [/creatinine|\bcr\b/, /^creatinine/i], [/egfr|gfr|kidney function/, /^eGFR/i], [/\binr\b|clot|coag/, /^INR/i], [/a1c|hba1c/, /HbA1c/i], [/glucose|sugar/, /glucose/i], [/troponin/, /troponin/i], [/sodium|\bna\b/, /sodium/i], [/haemoglobin|hemoglobin|\bhb\b/, /hemoglobin|haemoglobin/i], [/\bwbc\b|white cell/, /WBC/i], [/lactate/, /lactate/i], [/bnp/, /BNP/i], [/ldl|cholesterol/, /LDL/i], [/lipase/, /lipase/i]];
+  function offlineAnswer(ctx, q, F) {
+    const t = ' ' + q.toLowerCase() + ' ';
+    const c = (f) => `[${f.id}]`; const out = []; const cites = new Set(); const say = (s, ...fs) => { fs.filter(Boolean).forEach((f) => cites.add(f.id)); out.push(s.replace(/\.\.+$/, '.').replace(/\s{2,}/g, ' ') + ' ' + fs.filter(Boolean).map(c).join('')); };
+    const of = (k) => F.filter((f) => f.kind === k);
+    const labF = (re) => F.find((f) => f.kind === 'lab' && re.test(f.test || ''));
+    const labHit = LAB_WORDS.find(([w]) => w.test(t)); const sysHit = SYSTEMS.find((s) => SYS_WORDS[s.id].test(t));
+    const follow = new Set();
+    const futureQ = /if nothing|forecast|next \d|in \d+ ?h|72|tomorrow|expect|project|predict|going to/.test(t);
+    if (!futureQ && /chang|new |since|last 24|overnight|yesterday|update|different|what.?s happened/.test(t)) {
+      of('lab').filter((f) => f.series && f.series.pts.length > 1 && Date.now() - f.series.pts[f.series.pts.length - 1].at < 40 * 3600e3).forEach((f) => { const s = f.series, a = s.pts[s.pts.length - 2], b = s.pts[s.pts.length - 1]; if (a.raw !== b.raw) say(`${s.test} ${b.v > a.v ? 'rose' : 'fell'} from ${a.raw} to ${b.raw}${b.flag ? ` (${b.flag})` : ''}.`, f); });
+      const vl = F.find((f) => f.latest), vd = F.find((f) => f.dayAgo);
+      if (vl && vd) {
+        const L = vl.latest, Dd = vd.dayAgo, ch = [];
+        [['hr', 'heart rate', 10], ['sbp', 'systolic BP', 15], ['rr', 'respiratory rate', 3], ['spo2', 'SpO₂', 2], ['temp', 'temperature', 0.9], ['news', 'NEWS2', 1]].forEach(([k, n, th]) => { if (Math.abs(L[k] - Dd[k]) >= th) ch.push(`${n} ${Dd[k]} → ${L[k]}`); });
+        say(ch.length ? `Over about 24 h the vitals moved: ${ch.join(', ')}.` : `Vitals are broadly stable over 24 h (NEWS2 ${Dd.news} → ${L.news}).`, vd, vl);
+      }
+      of('result').filter((f) => /not yet acknowledged/.test(f.text)).forEach((f) => say('A critical result is still waiting to be acknowledged.', f));
+      of('order').filter((f) => /STAT|Pending signature/i.test(f.text)).slice(0, 3).forEach((f) => say(`Open order: ${f.text.replace(/^\w+ order: /, '')}.`, f));
+      of('med').filter((f) => f.held && !f.drug.match(/^(Metformin)$/)).slice(0, 2).forEach((f) => say(`${f.drug} is on hold.`, f));
+      follow.add('What should I watch on this shift?'); follow.add('What happens in 72 hours if nothing changes?');
+    } else if (/(med|drug|tablet|pill)/.test(t) && /(potassium|\bk\b|hyperkal)/.test(t)) {
+      const ms = of('med').filter((f) => /raises potassium/.test(f.text)); const k = labF(/^potassium/i);
+      if (ms.length) ms.forEach((f) => say(`${f.drug} raises potassium${f.held ? ' but is on hold' : ''}.`, f)); else say('No medication on the record is listed as raising potassium.');
+      if (k) say(`For context, potassium is ${k.series ? k.series.pts[k.series.pts.length - 1].raw : ''}.`, k);
+      const ck = of('med').find((f) => f.caution && /potassium/.test(f.terms)); if (ck) say(ck.text.replace(/^Caution: /, ''), ck);
+      follow.add("What's the trend in potassium?"); follow.add('Why is the kidney flagged?');
+    } else if (/(med|drug)/.test(t) && /bleed|anticoag|blood thin/.test(t)) {
+      of('med').filter((f) => /anticoagulant|antiplatelet|NSAID/.test(f.text)).forEach((f) => say(`${f.drug}: ${/anticoagulant/.test(f.text) ? 'anticoagulant' : /antiplatelet/.test(f.text) ? 'antiplatelet' : 'NSAID'}${f.held ? ', on hold' : ''}.`, f));
+      const r = F.find((f) => f.risk === 'bleed'); if (r) say(`Modelled major-bleeding risk is ${r.base}% over 30 days.`, r);
+      follow.add("What's the trend in INR?");
+    } else if (/allerg/.test(t)) {
+      const a = of('allergy')[0]; say(a.text + '.', a); const x = of('med').find((f) => f.caution && /allergy/.test(f.terms)); if (x) say(x.text.replace(/^Caution: /, ''), x);
+    } else if (/why|flag|alert|watch|red|amber|yellow|wrong with/.test(t) && sysHit) {
+      const tw = F.find((f) => f.kind === 'twin' && f.sys.includes(sysHit.id));
+      if (tw) say(`${sysHit.name} is on ${LVL[tw.level].toLowerCase()} in the twin.`, tw); else say(`${sysHit.name} shows no abnormal findings in the record.`);
+      F.filter((f) => ['lab', 'problem', 'score', 'infection'].includes(f.kind) && f.sys && f.sys.includes(sysHit.id) && (f.kind !== 'lab' || /\((H|L|HH|LL|A)/.test(f.text))).slice(0, 4).forEach((f) => say(f.kind === 'lab' ? `${f.test}: ${f.text.split(' (')[0].replace(f.test + ' ', '')} (${(f.text.match(/\(([^,)]+)/) || [])[1]}).` : f.text.replace(/^Active problem: /, '') + '.', f));
+      of('med').filter((f) => f.sys && f.sys.includes(sysHit.id) && !f.held).slice(0, 2).forEach((f) => say(`${f.drug} acts here.`, f));
+      follow.add(`Which medications affect the ${sysHit.name.split(' ')[0].toLowerCase()}?`);
+    } else if (labHit && labF(labHit[1])) {
+      const f = labF(labHit[1]); const s = f.series;
+      if (s && s.pts.length > 1) { const a = s.pts[0], b = s.pts[s.pts.length - 1]; say(`${s.test} has gone from ${a.raw} to ${b.raw} ${s.unit || ''} over ${Math.max(1, Math.round((b.at - a.at) / 86400e3))} days (${s.pts.map((x) => x.raw).join(' → ')}).`, f); }
+      else say(f.text + '.', f);
+      const fc = F.find((x) => x.kind === 'forecast' && x.text.includes(s ? s.test : '')); if (fc) say('The twin projects where it goes next if nothing changes.', fc);
+      const ev1 = F.find((x) => x.kind === 'forecast' && /event/.test(x.text) && s && x.text.includes(s.test) && !x.sim); if (ev1) say(ev1.text.replace('Forecast event if nothing changes: ', 'If nothing changes: ') + '.', ev1);
+      follow.add('What changed in the last 24 hours?');
+    } else if (/risk|worr|concern|danger|serious|worst/.test(t)) {
+      of('risk').sort((a, b) => b.base - a.base).slice(0, 3).forEach((f) => say(f.text.split('. Drivers')[0] + '.', f));
+      const e = F.find((f) => f.kind === 'forecast' && f.cls === 'crit' && !f.sim); if (e) say(e.text + '.', e);
+      follow.add('How can the hyperkalaemia risk come down?');
+    } else if (/forecast|next|72|tomorrow|if nothing|expect|project|predict|going to/.test(t)) {
+      const fc = of('forecast').filter((f) => !f.sim); fc.slice(0, 4).forEach((f) => say(f.text + '.', f));
+      if (!fc.length) say('The record has no labs the twin can project.');
+      follow.add("What's the biggest risk right now?");
+    } else if (/vital|news|heart rate|pulse|\bbp\b|pressure|oxygen|spo2|sat|temp|fever|breath/.test(t)) {
+      const vl = F.find((f) => f.latest), vd = F.find((f) => f.dayAgo); say(vl.text + '.', vl); if (vd) say('For comparison: ' + vd.text.replace(/^Vitals about 24 h earlier /, '') + '.', vd);
+    } else if (/abnormal|out of range|critical|high|low|labs?\b|results?/.test(t)) {
+      of('lab').filter((f) => /\((H|L|HH|LL|A)\b/.test(f.text)).forEach((f) => say(`${f.test} ${f.series ? f.series.pts[f.series.pts.length - 1].raw : ''} (${(f.text.match(/\(([^,)]+)/) || [])[1]}).`, f));
+      of('result').filter((f) => /not yet/.test(f.text)).forEach((f) => say(f.text + '.', f));
+    } else if (/watch|monitor|check|plan|do next|priorit|shift|handover/.test(t)) {
+      F.filter((f) => f.kind === 'twin' && f.level === 2).forEach((f) => say(`${f.text.split(' because')[0].replace('Twin status of ', '')}: ${(SYSTEMS.find((s) => f.sys.includes(s.id)) || {}).watch}.`, f));
+      F.filter((f) => f.kind === 'forecast' && f.cls === 'crit' && !f.sim).slice(0, 2).forEach((f) => say(f.text + '.', f));
+      of('result').filter((f) => /not yet/.test(f.text)).forEach((f) => say('Acknowledge the open critical result.', f));
+      of('med').filter((f) => f.caution === 'crit').slice(0, 2).forEach((f) => say(f.text + '.', f));
+    } else if (/score|egfr|crcl|chads|cha2|vasc|has.?bled|bmi|qsofa|map\b|shock index/.test(t)) {
+      const KEYS = [[/chads|cha2|vasc|stroke score/, 'CHA'], [/has.?bled/, 'HAS'], [/egfr|gfr/, 'eGFR'], [/crcl|creatinine clearance/, 'CrCl'], [/bmi/, 'BMI'], [/qsofa/, 'qSOFA'], [/\bmap\b|mean arterial/, 'MAP'], [/shock/, 'Shock'], [/news/, 'NEWS2']];
+      const want = KEYS.filter(([re]) => re.test(t)).map(([, k]) => k);
+      const fs = of('score').filter((f) => !want.length || want.some((k) => f.text.startsWith(k)));
+      fs.forEach((f) => say(f.text.replace(/;\s*/, ': ').replace(/\.$/, '') + '.', f));
+    } else if (/infect|isolat|cauti|antibiotic|precaution|organism/.test(t)) {
+      const fs = of('infection'); fs.forEach((f) => say(f.text + '.', f)); if (!fs.length) say('No infection or isolation is recorded.');
+    } else {
+      const words = t.match(/[a-z0-9]{3,}/g) || []; const stop = /^(the|and|what|why|how|does|this|that|with|for|are|was|his|her|patient|any|about|have|has|show|tell|me)$/;
+      const scored = F.map((f) => [f, words.filter((w) => !stop.test(w) && f.terms.includes(w)).length]).filter(([, n]) => n).sort((a, b) => b[1] - a[1]).slice(0, 4);
+      if (scored.length) { out.push('Here is what the record has on that:'); scored.forEach(([f]) => say('• ' + f.text + '.', f)); }
+      else out.push("I couldn't find anything in this patient's record that answers that. Try asking about a lab, a vital sign, a medication, a body system, the risks or the forecast.");
+    }
+    if (!follow.size) { follow.add('What changed in the last 24 hours?'); follow.add('What should I watch on this shift?'); }
+    return { answer: out.join(' '), citations: [...cites], followups: [...follow].slice(0, 3) };
+  }
+  const askPrompt = (ctx, q, F) => `You are "Ask the twin", a question-answering assistant inside a hospital record system. The data is fictional demo data.
+Answer the clinician's question using ONLY the numbered facts below. Every sentence that states something from the record must end with the fact ids it relies on in square brackets, for example [F3] or [F3][F7]. Never cite an id that is not listed. If the facts don't answer the question, say so plainly and suggest what to check instead. Do not invent values, diagnoses or treatments; you may point out what the facts imply, such as a rising trend or an interaction the facts list. Forecasts and risks come from an illustrative model, so call them projections. Plain language, short sentences, at most 120 words.
+Return only JSON: {"answer": "text with [F#] citations", "citations": ["F#", ...], "followups": ["up to 3 short follow-up questions"]}
+
+Patient: ${ctx.p.age}-year-old ${ctx.p.sex === 'F' ? 'female' : 'male'} (identifiers withheld). Time now: ${new Date().toLocaleString('en-US')}.
+Facts:
+${F.map((f) => `${f.id} [${f.kind}] ${f.text}`).join('\n')}
+
+Question: ${q}`;
+  const ASK_ERR = { rate_limited: 'Claude is busy or the usage limit was reached', session_expired: 'the claude.ai session expired', refused: 'Claude declined to answer', empty_completion: 'Claude returned nothing', invalid_json: 'Claude returned an unreadable answer' };
+  async function askTwin(pid, q) {
+    q = String(q || '').trim().slice(0, 300); if (!q) return;
+    const p = T.P(pid); const u = T.me(); if (!p || !u) return;
+    const ctx = askCtx(p);
+    const F = askFacts(ctx);
+    UI.ptTwinAsk = UI.ptTwinAsk || {}; const thread = UI.ptTwinAsk[pid] = UI.ptTwinAsk[pid] || [];
+    const item = { q, at: Date.now(), state: 'pending', facts: F };
+    thread.push(item); render();
+    const s = T.caps && T.caps.sample;
+    let res = null, engine = 'rules', note = '';
+    if (s) {
+      try {
+        const j = await s.json(askPrompt(ctx, q, F), { cache: false });
+        if (!j || typeof j.answer !== 'string' || !j.answer.trim()) throw { code: 'empty_completion' };
+        res = { answer: j.answer, citations: (j.citations || []).filter((id) => F.some((f) => f.id === id)), followups: (j.followups || []).slice(0, 3).map(String) };
+        engine = 'claude';
+      } catch (e) {
+        const code = e && e.code;
+        if (['not_granted', 'sampling_disabled', 'not_declared', 'capability_disabled', 'capability_removed'].includes(code)) T.caps.sample = null;
+        note = `Claude wasn't available (${ASK_ERR[code] || code || 'error'}), so the built-in rules answered.`;
+      }
+    } else note = (window.claude && window.claude.use) ? '' : 'Answered by the built-in rules. On the published link, Claude answers from the same facts.';
+    if (!res) res = offlineAnswer(ctx, q, F);
+    const inText = [...new Set((res.answer.match(/\[F\d+\]/g) || []).map((x) => x.slice(1, -1)))].filter((id) => F.some((f) => f.id === id));
+    res.answer = res.answer.replace(/\[(F\d+)\]/g, (m, id) => (F.some((f) => f.id === id) ? m : ''));
+    Object.assign(item, { state: 'done', engine, note, answer: res.answer, cites: inText.length ? inText : res.citations, followups: res.followups, uncited: !inText.length && !/couldn't find/.test(res.answer) });
+    audit('twin-ask', { patient: p, detail: `${engine === 'claude' ? 'Claude' : 'rules'}: "${q.slice(0, 90)}" · ${item.cites.length} source${item.cites.length === 1 ? '' : 's'} cited` });
+    render();
+    setTimeout(() => { const el = document.querySelector('.ask-thread .ask-item:last-child'); el && el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 30);
+  }
+  function askCtx(p) {
+    const lv = levers(p), on = UI.ptTwin[p.id] || baseSet(lv), opt = UI.ptTwinOpt[p.id] || {};
+    const sim = project(p, lv, on, opt), base = project(p, lv, baseSet(lv), {});
+    return { p, lv, on, opt, rs: risks(p), sim, base, ev: events(p, sim), evB: events(p, base) };
+  }
+  function askSuggest(ctx) {
+    const { p } = ctx; const out = ['What changed in the last 24 hours?'];
+    const alert = SYSTEMS.map((s) => [s, systemState(p, s).level]).sort((a, b) => b[1] - a[1])[0];
+    if (alert && alert[1]) out.push(`Why is the ${alert[0].name.split(' ')[0].toLowerCase()} flagged?`);
+    const k = lab(p, /^potassium/i); if (k && num(k.value) > 5.1) out.push('Which medications raise potassium?');
+    const worst = p.labs.find((l) => l.flag && l.flag.length > 1) || p.labs.find((l) => l.flag); if (worst) out.push(`What's the trend in ${worst.test}?`);
+    out.push("What's the biggest risk right now?", 'What happens in 72 hours if nothing changes?', 'What should I watch on this shift?');
+    return [...new Set(out)].slice(0, 7);
+  }
+  function askAnswerHtml(item, qi, pid) {
+    if (item.state === 'pending') return '<div class="ask-a pending"><span class="dots"><i></i><i></i><i></i></span> Reading the record…</div>';
+    const F = item.facts; const used = item.cites.map((id) => F.find((f) => f.id === id)).filter(Boolean);
+    const num1 = (id) => used.findIndex((f) => f.id === id) + 1;
+    const body = esc(item.answer).replace(/\[(F\d+)\]/g, (m, id) => { const n = num1(id); return n ? `<button class="cite" data-act="ask-cite" data-k="${qi}-${id}" aria-label="Source ${n}">${n}</button>` : ''; });
+    const src = used.map((f, i) => { const tab = ASK_LINK[f.kind]; return `<li id="ask-${qi}-${f.id}"><span class="sn">${i + 1}</span><span class="si" aria-hidden="true">${ASK_ICON[f.kind] || '•'}</span><span class="st"><small>${esc(f.kind === 'twin' || f.kind === 'forecast' || f.kind === 'risk' || f.kind === 'anatomy' ? 'Twin model' : f.kind[0].toUpperCase() + f.kind.slice(1))}</small>${esc(f.text)}</span>${tab ? `<a href="#patient-${pid}-${tab}">Open</a>` : ''}</li>`; }).join('');
+    return `<div class="ask-a"><div class="ask-meta">${item.engine === 'claude' ? pill('accent', 'Claude') : pill('', 'Built-in rules')}<span class="muted">${used.length} source${used.length === 1 ? '' : 's'} from the record</span></div>
+      <p class="ask-body">${body}</p>
+      ${item.uncited ? '<p class="ask-warn">No source was cited for this answer. Treat it with caution and check the chart.</p>' : ''}
+      ${used.length ? `<ol class="ask-src">${src}</ol>` : ''}
+      ${item.note ? `<p class="muted ask-note">${esc(item.note)}</p>` : ''}
+      ${item.followups && item.followups.length ? `<div class="ask-chips">${item.followups.map((f) => `<button class="chip" data-act="ask-q" data-p="${pid}" data-q="${esc(f)}">${esc(f)}</button>`).join('')}</div>` : ''}</div>`;
+  }
+  function vAsk(ctx) {
+    const { p } = ctx; const thread = (UI.ptTwinAsk || {})[p.id] || [];
+    const nFacts = askFacts(ctx).length; const claude = !!(T.caps && T.caps.sample);
+    const items = thread.map((it, i) => `<div class="ask-item"><div class="ask-q"><span>${esc(it.q)}</span><small>${new Date(it.at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</small></div>${askAnswerHtml(it, i, p.id)}</div>`).join('');
+    const pending = thread.some((it) => it.state === 'pending');
+    return `<div class="ask">
+      <div class="ask-main panel"><div class="body">
+        ${thread.length ? `<div class="ask-thread">${items}</div>` : `<div class="ask-empty"><b>Ask anything about ${esc(p.name.split(' ')[0])}'s record.</b><p class="muted">Answers come only from the record and cite every source. Try one of these:</p><div class="ask-chips">${askSuggest(ctx).map((q) => `<button class="chip" data-act="ask-q" data-p="${p.id}" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div></div>`}
+        <form data-form="twin-ask" class="ask-form" autocomplete="off"><input type="hidden" name="p" value="${p.id}"><input name="q" type="text" maxlength="300" placeholder="Ask about labs, vitals, medications, risks, the forecast…" aria-label="Question about this patient" ${pending ? 'disabled' : ''} required><button class="btn primary" type="submit" ${pending ? 'disabled' : ''}>Ask</button></form>
+        ${thread.length ? `<div class="ask-chips ask-more">${askSuggest(ctx).slice(0, 4).map((q) => `<button class="chip" data-act="ask-q" data-p="${p.id}" data-q="${esc(q)}">${esc(q)}</button>`).join('')}<button class="chip ghost" data-act="ask-clear" data-p="${p.id}">Clear</button></div>` : ''}
+      </div></div>
+      <aside class="ask-side">
+        ${panel('How answers work', `<ul class="howlist"><li>${claude ? '<b>Claude</b> answers on this page' : '<b>Built-in rules</b> answer here; on the published link Claude answers'}, using only ${nFacts} numbered facts from the record.</li><li>Every claim carries a numbered source you can open. Answers with no source are flagged.</li><li>Facts cover labs with their history, vitals, medications, problems, allergies, infections, orders, scores, risks, the forecast and anatomy findings.</li><li>Never sent: name, date of birth, MRN, contact details, payer, and free-text notes.</li><li>Every question is written to the audit log. Answers are not saved to the record.</li></ul>`)}
+        ${panel('Not a diagnosis', '<p class="muted" style="margin:0;font-size:13px">Ask the twin summarises what the record already says. Forecasts and risks come from an illustrative model. Check the sources before acting.</p>')}
+      </aside></div>`;
+  }
+  T.FORMS['twin-ask'] = (f) => askTwin(f.p, f.q);
+  ACT['ask-q'] = (d) => askTwin(d.p, d.q);
+  ACT['ask-clear'] = (d) => { if (UI.ptTwinAsk) delete UI.ptTwinAsk[d.p]; render(); };
+  ACT['ask-cite'] = (d) => { const el = document.getElementById('ask-' + d.k); if (!el) return; el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); };
+
   /* ---------- Tab ---------- */
   CHART.twin = function (u, p) {
-    ['ptTwin', 'ptTwinView', 'ptTwinHour', 'ptTwinSys', 'ptTwinOpt'].forEach((k) => { UI[k] = UI[k] || {}; });
+    ['ptTwin', 'ptTwinView', 'ptTwinHour', 'ptTwinSys', 'ptTwinOpt', 'ptTwinAsk'].forEach((k) => { UI[k] = UI[k] || {}; });
     stopPlay(); GEO = {};
     const sel = UI.ptTwinSys[p.id] || null;
     const lv = levers(p);
@@ -998,7 +1214,7 @@
     const nCrit = ev.filter((e) => e.cls === 'crit').length;
     const head = `<div class="twin-head"><div class="twin-id"><span class="dot"></span><div><b>Digital twin · ${esc(p.name.split(' ')[0])}</b><small>Synced ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} · ${counts} · hourly to +72 h · confidence ${cf.score}%</small></div></div>
       <div class="twin-state">${changed ? pill('accent', `${changed} lever${changed > 1 ? 's' : ''} changed`) : pill('', 'Record as is')}${nCrit ? pill('crit', `${nCrit} danger event${nCrit > 1 ? 's' : ''} in 72 h`) : pill('ok', 'No danger events in 72 h')}</div></div>`;
-    const R = { overview: vOverview, anatomy: vAnatomy, physiology: vPhysiology, forecast: vForecast, pk: vPK, meds: vMeds, scenarios: vScenarios, sources: vSources }[view] || vOverview;
+    const R = { overview: vOverview, ask: vAsk, anatomy: vAnatomy, physiology: vPhysiology, forecast: vForecast, pk: vPK, meds: vMeds, scenarios: vScenarios, sources: vSources }[view] || vOverview;
     const html = `<div class="banner info"><p><b>Digital twin.</b> A live model of ${esc(p.name.split(' ')[0])} built only from the record. Illustrative rules, not a validated model: simulations are logged and change nothing in the record.</p></div>
       ${head}${nav}<div class="twin-view" data-view="${view}">${R(ctx)}</div>`;
     monSet(sim, p, h);
@@ -1048,5 +1264,5 @@
     audit('twin-simulate', { patient: T.P(el.dataset.p), detail: `${el.dataset.l} ${el.dataset.k}=${v} (simulation only)` });
     render();
   };
-  T.ptwin = { project, risks, levers, scores, confidence, events, pkSeries, HOURS };
+  T.ptwin = { askFacts: (p) => askFacts(askCtx(p)), offlineAnswer: (p, q) => { const c = askCtx(p); return offlineAnswer(c, q, askFacts(c)); }, project, risks, levers, scores, confidence, events, pkSeries, HOURS };
 })(window.Tessera);
