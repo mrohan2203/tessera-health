@@ -1189,6 +1189,72 @@ Question: ${q}`;
   ACT['ask-clear'] = (d) => { if (UI.ptTwinAsk) delete UI.ptTwinAsk[d.p]; render(); };
   ACT['ask-cite'] = (d) => { const el = document.getElementById('ask-' + d.k); if (!el) return; el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); };
 
+  /* ---------- Patient twins: everyone you care for, ranked by risk ----------
+     One row per patient in the user's care, built from the same twin model (organ states, 72-hour
+     forecast) plus vitals and lab history. Same access rule as the patient list (care relationship),
+     and opening it is audited with patient tokens, not names. */
+  const CAT = { critical: ['crit', 'Critical'], watch: ['warn', 'Watch'], stable: ['ok', 'Stable'] };
+  function twinSummary(p) {
+    const lv = levers(p), bset = baseSet(lv);
+    const base = project(p, lv, bset, {});
+    const evs = events(p, base);
+    const n = T.news2 ? T.news2(p) : { sc: 0, risk: 'Low' };
+    const sys = SYSTEMS.map((s) => [s, systemState(p, s).level]);
+    const alerts = sys.filter(([, l]) => l === 2), watches = sys.filter(([, l]) => l === 1);
+    const crit = (S().results || []).filter((r) => r.patient === p.id && r.state !== 'Closed');
+    const critEv = evs.filter((e) => e.cls === 'crit'), soon = critEv.find((e) => e.h <= 24);
+    const vs = T.hist ? T.hist.vitals(p) : []; const last = vs[vs.length - 1]; const dayAgo = vs.slice().reverse().find((x) => last && last.at - x.at >= 20 * 3600e3);
+    const changes = [];
+    if (last && dayAgo && last.news != null && dayAgo.news != null && last.news !== dayAgo.news) changes.push([last.news > dayAgo.news ? 'up' : 'down', `NEWS2 ${dayAgo.news} → ${last.news}`]);
+    const labsH = T.hist ? T.hist.labs(p) : [];
+    labsH.forEach((s) => { const b = s.pts[s.pts.length - 1], a = s.pts[s.pts.length - 2]; if (a && b && Date.now() - b.at < 40 * 3600e3 && a.raw !== b.raw && (b.flag || Math.abs(b.v - a.v) / Math.max(Math.abs(a.v), 1e-6) >= 0.05)) changes.push([b.v > a.v ? 'up' : 'down', `${s.test} ${a.raw} → ${b.raw}`, !!b.flag && Math.abs(b.v - a.v) > 0 && (b.v > a.v) === /H/.test(b.flag)]); });
+    crit.filter((r) => r.state === 'New').forEach((r) => changes.unshift(['crit', `New critical: ${r.test} ${r.value}`]));
+    const worst = labsH.filter((s) => s.pts[s.pts.length - 1].flag).sort((x, y) => y.pts[y.pts.length - 1].flag.length - x.pts[x.pts.length - 1].flag.length)[0] || labsH[0] || null;
+    const worsening = changes.filter((c) => c[2]);
+    let score = n.sc * 6 + (n.sc >= 7 ? 25 : 0) + worsening.length * 4 + alerts.length * 10 + watches.length * 3 + critEv.length * 6 + crit.length * 12 + (soon ? 10 : 0) + ((S().isolation || []).some((i) => i.patient === p.id) ? 2 : 0);
+    const cat = n.sc >= 7 || crit.some((r) => r.state === 'New') || soon || alerts.length >= 2 ? 'critical' : n.sc >= 5 || alerts.length || critEv.length || crit.length || worsening.length ? 'watch' : 'stable';
+    const why = [n.sc >= 5 && `NEWS2 ${n.sc}`, crit.length && `${crit.length} open critical result${crit.length > 1 ? 's' : ''}`, soon && `${soon.text.split(':')[0]} by ${hLabel(soon.h)}`, alerts.length && `${alerts.map(([s]) => s.name.split(' ')[0]).join(', ')} on alert`, n.sc < 5 && worsening.length && `${worsening.map((c) => c[1].split(' ')[0] + (c[1].split(' ')[1] && !/\d/.test(c[1].split(' ')[1]) ? ' ' + c[1].split(' ')[1] : '')).join(', ')} worsening`].filter(Boolean);
+    return { p, n, sys, alerts, crit, evs, first: critEv[0] || evs.find((e) => e.cls === 'warn') || null, vs, last, dayAgo, changes: changes.slice(0, 3), worst, score, cat, why };
+  }
+  T.VIEWS.twins = (u) => {
+    if (u.role !== 'doctor' && u.role !== 'nurse') return { title: 'Patient twins', sub: '', body: '<p class="muted">Patient twins are for the care team.</p>' };
+    UI.twinsF = UI.twinsF || 'all'; UI.twinsSort = UI.twinsSort || 'risk';
+    const all = T.myPatients(u).map((p) => { try { return twinSummary(p); } catch (e) { return null; } }).filter(Boolean);
+    audit('view-twin-list', { resource: 'patient twins', patients: all.map((r) => T.tok(r.p)).join(' '), detail: `${all.length} twins ranked` });
+    const q = (UI.twinsQ || '').toLowerCase();
+    let list = all.filter((r) => (UI.twinsF === 'all' || r.cat === UI.twinsF) && (!q || r.p.name.toLowerCase().includes(q) || String(r.p.bed || '').toLowerCase().includes(q)));
+    const rank = { critical: 0, watch: 1, stable: 2 };
+    list.sort(UI.twinsSort === 'news' ? (a, b) => b.n.sc - a.n.sc : UI.twinsSort === 'bed' ? (a, b) => String(a.p.bed || 'zz').localeCompare(String(b.p.bed || 'zz')) : (a, b) => rank[a.cat] - rank[b.cat] || (a.cat === 'critical' ? b.n.sc - a.n.sc : 0) || b.score - a.score || b.n.sc - a.n.sc);
+    const cnt = (c) => all.filter((r) => r.cat === c).length;
+    const tiles = `<div class="tw-tiles"><div class="tw-tile"><span>Your patients</span><b>${all.length}</b></div>${['critical', 'watch', 'stable'].map((c) => `<button class="tw-tile ${c} ${UI.twinsF === c ? 'on' : ''}" data-act="twins-f" data-f="${UI.twinsF === c ? 'all' : c}"><span>${CAT[c][1]}</span><b>${cnt(c)}</b></button>`).join('')}<div class="tw-tile"><span>Open critical results</span><b>${all.reduce((n, r) => n + r.crit.length, 0)}</b></div></div>`;
+    const dot = (l) => `<i class="lvd lv${l}"></i>`;
+    const rows = list.map((r) => {
+      const p = r.p, w = r.worst, wl = w && w.pts[w.pts.length - 1], [lo, hi] = w ? T.hist.refRange(w.ref) : [];
+      const nv = r.vs.slice(-12).map((x) => x.news).filter((x) => x != null);
+      return `<article class="tw-row ${r.cat}">
+        <div class="tw-who"><span class="tw-bar" aria-hidden="true"></span><div><a href="#patient-${p.id}-twin"><b>${esc(p.name)}</b></a><small>${p.age} ${esc(p.sex)} · ${esc(p.bed || p.unit || p.status)} · ${esc((T.U(p.attending) || {}).name || '')}</small>
+          <div class="tw-why">${pill(CAT[r.cat][0], CAT[r.cat][1])}<span>${esc(r.why.join(' · ') || 'No active concerns')}</span></div></div></div>
+        <div class="tw-news"><small>NEWS2</small><b class="${r.n.sc >= 7 ? 'crit' : r.n.sc >= 5 ? 'warn' : ''}">${r.n.sc}</b>${nv.length > 2 ? T.hist.spark(nv, { w: 70, h: 20, cls: r.n.sc >= 7 ? 'crit' : r.n.sc >= 5 ? 'warn' : '' }) : ''}</div>
+        <div class="tw-lab">${w ? `<small>${esc(w.test)}</small><b class="${wl.flag && wl.flag.length > 1 ? 'crit' : wl.flag ? 'warn' : ''}">${esc(wl.raw)}<em>${esc(w.unit || '')}</em></b>${w.pts.length > 1 ? T.hist.spark(w.pts.map((x) => x.v), { w: 70, h: 20, lo, hi, cls: wl.flag && wl.flag.length > 1 ? 'crit' : wl.flag ? 'warn' : '' }) : ''}` : '<small class="muted">No labs</small>'}</div>
+        <div class="tw-chg"><small>Last 24 h</small>${r.changes.length ? `<ul>${r.changes.map(([d, t, worse]) => `<li class="${d === 'crit' ? 'crit' : worse || /^NEWS2/.test(t) && d === 'up' ? 'bad' : /^NEWS2/.test(t) && d === 'down' ? 'good' : 'neutral'}">${d === 'up' ? '▲' : d === 'down' ? '▼' : '!'} ${esc(t)}</li>`).join('')}</ul>` : '<span class="muted">No change</span>'}</div>
+        <div class="tw-next"><small>Next 72 h</small>${r.first ? `<span class="${r.first.cls}">${esc(r.first.text.split(':')[0])} <b>${hLabel(r.first.h)}</b></span>` : '<span class="muted">No thresholds crossed</span>'}</div>
+        <div class="tw-sys" aria-label="Organ systems">${r.sys.map(([s, l]) => `<span title="${esc(s.name)}: ${LVL[l]}">${dot(l)}</span>`).join('')}</div>
+        <div class="tw-act"><a class="btn small primary" href="#patient-${p.id}-twin">Open twin</a><button class="btn small" data-act="twins-ask" data-p="${p.id}">Ask</button></div>
+      </article>`;
+    }).join('');
+    const legend = `<div class="legend tw-legend"><span><i class="lvd lv2"></i>Alert</span><span><i class="lvd lv1"></i>Watch</span><span><i class="lvd lv0"></i>Stable</span><span class="muted">Dots: ${SYSTEMS.map((s) => s.name.split(' ')[0]).join(' · ')}</span></div>`;
+    return { title: 'Patient twins', sub: `Everyone in your care, ranked by risk from their digital twin · ${u.role === 'nurse' ? 'your unit' : 'your patients'} only · this view is logged`,
+      body: `${tiles}
+        <div class="tw-tools"><input type="search" placeholder="Find a patient or bed" value="${esc(UI.twinsQ || '')}" data-change="twins-q" aria-label="Find a patient or bed">
+          <div class="seg">${[['risk', 'Risk'], ['news', 'NEWS2'], ['bed', 'Bed']].map(([k, l]) => `<button data-act="twins-sort" data-s="${k}" class="${UI.twinsSort === k ? 'on' : ''}">${l}</button>`).join('')}</div>${legend}</div>
+        <div class="tw-list">${rows || '<p class="muted">No patients match.</p>'}</div>
+        <p class="kpi-note" style="margin-top:12px">Critical: NEWS2 7 or more, a new critical result, a danger threshold crossed within 24 h, or two organ systems on alert. Watch: NEWS2 5–6, any organ system on alert, an open critical result, a forecast danger, or an abnormal lab moving further out of range. Illustrative rules, not a validated triage tool.</p>` };
+  };
+  ACT['twins-f'] = (d) => { UI.twinsF = d.f; render(); };
+  ACT['twins-sort'] = (d) => { UI.twinsSort = d.s; render(); };
+  ACT['twins-ask'] = (d) => { UI.ptTwinView = UI.ptTwinView || {}; UI.ptTwinView[d.p] = 'ask'; location.hash = `patient-${d.p}-twin`; };
+  T.CHANGE['twins-q'] = (v) => { UI.twinsQ = v; render(); };
+
   /* ---------- Tab ---------- */
   CHART.twin = function (u, p) {
     ['ptTwin', 'ptTwinView', 'ptTwinHour', 'ptTwinSys', 'ptTwinOpt', 'ptTwinAsk'].forEach((k) => { UI[k] = UI[k] || {}; });

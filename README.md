@@ -43,6 +43,7 @@ To install on a real iPhone or share through TestFlight, see [ios/README.md](ios
 - **Break-the-glass** for out-of-scope emergencies, with a reason and an after-the-fact review.
 - **Two-person rules** for role changes and blood issue. Nobody approves their own request.
 - **Vitals and lab history:** a nursing flowsheet (72 hours of charted sets, nurses and doctors can chart new ones, audited and fed straight into NEWS2 and the twin) and prior values for every numeric lab, with sparklines, “↑ from 5.7 yesterday” deltas and a full trend view. Patients see their own trends in the portal.
+- **Patient twins list:** everyone in your care ranked critical, watch or stable from their digital twin, with NEWS2 and the most abnormal lab as sparklines, what changed in the last 24 hours, the next forecast danger and organ-system dots. Care team only, audited with patient tokens.
 - **Ask the twin:** questions about a patient (“What changed in the last 24 hours?”, “Which medications raise potassium?”) answered only from a numbered list of facts drawn from the record, with every claim cited and linked back to the chart. Claude answers on the published link; built-in rules answer offline. Identifiers and free-text notes are never sent, and every question is audited.
 - **Digital twins** of the patient and of the hospital (floors, zones and beds). The patient twin has a **3D anatomy** of 2,234 separately addressable structures (bones, cartilage, ligaments and tendons, 428 muscles, 639 arteries, 404 veins, nerves, brain, heart valves, organs). The patient's record lights up the exact structures it affects, such as 52 coronary branches, liver segments, renal artery branches and retinas. It runs hour by hour to +72 h, with a simulated bedside monitor, lab forecasts with uncertainty bands, drug-level pharmacokinetics and what-if scenarios with doses. Simulations are audited and change nothing.
 - **Safety gates** such as allergy checks, controlled-drug confirmation, WHO surgical checklist and
@@ -67,7 +68,7 @@ Two browser-run suites cover the app. Run them in the browser console at http://
 **Reset demo data**:
 
 ```js
-await import('/tests/usecases.js?' + Date.now()).then((m) => m.run())   // 68 end-to-end workflows
+await import('/tests/usecases.js?' + Date.now()).then((m) => m.run())   // 69 end-to-end workflows
 await import('/tests/sweep.js?' + Date.now()).then((m) => m.run())      // every page, action, form and dialog
 ```
 

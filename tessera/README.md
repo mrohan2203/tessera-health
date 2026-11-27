@@ -92,6 +92,7 @@ The sign-in screen groups one-click demo buttons by area. They still go through 
 | Capacity forecast | Bed boards show now, not tomorrow | As catherine.ceo move the "what if the ER sends more" slider and read the drivers behind each number |
 | Family updates | Families phone the unit for status; staff can't share details | radha.patient's spouse is listed; when jamal.periop completes her OT case, a status-only message goes out automatically |
 | Vitals and lab history | Charts show one number with no past, so nobody sees direction | As grace.rn open Harish Malhotra › Vitals: 72 hours of flowsheet sets, six trend charts, and a form to chart a new set (it updates NEWS2, alerts and the twin, and is audited). Results shows a sparkline and “↑ from” for every lab; click one for its full trend. The twin's forecasts start from the measured trend |
+| Patient twins list | Twins open one chart at a time; nobody sees who is deteriorating across the list | As elena.cardio open Patient twins: your 7 patients ranked critical, watch, stable, with why, NEWS2 and worst-lab sparklines, the last 24 h, the next forecast danger and organ dots. Filter, sort, open a twin or jump straight to Ask |
 | Ask the twin | Answers are scattered across tabs, and AI chat can make things up | As elena.cardio open Harish Malhotra › Twin › Ask and tap a suggestion. Each answer cites numbered facts from the record you can open; uncited answers are flagged; unanswerable questions are declined. Claude on the published link, rules offline. No identifiers or notes are sent; every question is audited |
 | Patient digital twin | Risk lives in a dozen tabs; nobody sees the whole patient or what a change would do | As elena.cardio open Harish Malhotra › Twin: eight views on an hourly timeline to +72 h (press Play). Anatomy 3D: 2,234 BodyParts3D structures (bones, cartilage, ligaments, muscles, arteries, veins, nerves, organs) with layers, explode, x-ray, isolate, search, and the record mapped onto exact structures (click “Coronary arteries” to isolate 52 branches; select any structure for its FMA ID, size and what in the record points to it). Overview: organ-level body map, simulated bedside monitor (ECG changes with projected potassium; AF is irregular), nine computed scores, five risks including stroke, and what-if levers with doses and timing (try vitamin K 1 mg vs 10 mg, or restarting warfarin at +24 h). Forecast: potassium, INR, creatinine, glucose, NEWS2 and heart rate with 80% bands and every threshold crossed. Drug levels: one-compartment PK on the ward schedule, CrCl-adjusted (meropenem time above MIC). Physiology, Medications (drug-to-organ map, renal dosing, interactions), Scenarios (save and compare) and Sources (inputs, confidence, models, what it never reads). Simulations are audited and order nothing |
 | Hospital digital twin | Bed boards are lists, not a building | As catherine.ceo open Hospital map: floors, zones and numbered beds by occupancy and NEWS2, with equipment alerts. No patient names |
@@ -103,11 +104,11 @@ Two suites run in the browser against the local server (http://localhost:8765). 
 ```js
 // 1. Sweep: every account, every page, every button, every form and dialog
 await import('/tests/sweep.js?' + Date.now()).then((m) => m.run())
-// 2. Use cases: 68 real workflows across all roles, each with an expected outcome
+// 2. Use cases: 69 real workflows across all roles, each with an expected outcome
 await import('/tests/usecases.js?' + Date.now()).then((m) => m.run())
 ```
 
-Last run: sweep 237 pages, 1,095 actions, 162 forms, 38 dialogs, 0 issues (desktop); use cases 68/68 passed.
+Last run: sweep 219 pages, 895 actions, 156 forms, 48 dialogs, 0 issues (desktop); use cases 69/69 passed.
 
 ## Files
 
