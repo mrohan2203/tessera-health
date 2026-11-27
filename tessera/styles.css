@@ -1098,3 +1098,61 @@ body:has(.entry)::before{background:#020f09}
 .anat-pin span{display:block;max-width:300px;overflow:hidden;text-overflow:ellipsis}
 .anat-pin.flip{transform:translate(calc(-100% - 14px),-50%)}
 .anat-pin.flip::before{left:auto;right:-14px}.anat-pin.flip::after{left:auto;right:-18px}
+
+/* ---------- Vitals and lab history ---------- */
+.spark{display:block;overflow:visible}
+.spark polyline{fill:none;stroke:var(--accent);stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round}
+.spark circle{fill:var(--accent)}
+.spark .sp-band{fill:var(--ok);opacity:.14}
+.spark.warn polyline{stroke:var(--warn)}.spark.warn circle{fill:var(--warn)}
+.spark.crit polyline{stroke:var(--crit)}.spark.crit circle{fill:var(--crit)}
+.sp-btn{all:unset;cursor:pointer;display:inline-block;padding:3px 4px;border-radius:6px;border:1px solid transparent}
+.sp-btn:hover{border-color:var(--line);background:var(--surface-2)}
+.sp-btn:focus-visible{outline:2px solid var(--accent)}
+td .sub.up{color:var(--crit)}td .sub.down{color:var(--ok)}
+.trendrow > td{background:var(--surface-2);padding:12px 14px}
+.labtrend .hchart{margin-top:6px}
+.hchart{width:100%;height:auto;display:block;overflow:visible}
+.hchart .hb{fill:var(--ok);opacity:.1}
+.hchart .hg{stroke:var(--line);stroke-width:1;opacity:.6}
+.hchart .ht{font-size:10.5px;fill:var(--muted);font-family:var(--mono)}
+.hchart .hl{fill:none;stroke:var(--accent);stroke-width:2.2;stroke-linejoin:round}
+.hchart .hl.dia{stroke:var(--info);opacity:.85}
+.hchart .hd{fill:var(--accent);stroke:var(--surface);stroke-width:1.2}
+.hchart .hd.dia{fill:var(--info)}
+.hchart .hd.fl{fill:var(--crit)}
+.vtiles{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:0 0 8px}
+.vtile{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:9px 12px;display:flex;flex-direction:column;gap:1px;border-left:4px solid var(--ok)}
+.vtile span{font-size:11.5px;color:var(--muted);font-weight:600}
+.vtile b{font-family:var(--display);font-size:24px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}
+.vtile small{font-size:11px;color:var(--muted)}
+.vtile.c1{border-left-color:var(--wr-yellow)}.vtile.c2{border-left-color:#f08a24}.vtile.c3{border-left-color:var(--wr-red)}
+.vtile.c3 b{color:var(--crit)}
+.dl{font-size:11px;font-weight:600;margin-left:4px;color:var(--muted)}
+.vtile .dl{margin:0}
+.dl.up{color:var(--crit)}.dl.down{color:var(--ok)}
+.vmeta{font-size:12.5px;margin:0 0 12px}
+.vform{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px;align-items:end}
+.vform .field{display:flex;flex-direction:column;gap:4px;font-size:12.5px;margin:0}
+.vform input,.vform select{width:100%;padding:7px 9px;border-radius:8px;border:1px solid var(--line);background:var(--surface-2)}
+.vform-act{grid-column:1/-1;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.vcharts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 18px}
+.vchart b{font-size:13px}
+.flowsheet th[scope=row]{text-align:left;font-weight:600;white-space:nowrap}
+.flowsheet thead th{white-space:nowrap;font-weight:500}
+.flowsheet td{text-align:center}
+.flowsheet td.c1{background:color-mix(in srgb,var(--wr-yellow) 20%,transparent)}
+.flowsheet td.c2{background:color-mix(in srgb,#f08a24 26%,transparent)}
+.flowsheet td.c3{background:color-mix(in srgb,var(--wr-red) 30%,transparent);font-weight:700}
+.vkv dd{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.vkv .spark{opacity:.85}
+/* twin charts: measured past */
+.tchart .cpastbg{fill:var(--surface-2);opacity:.55}
+.tchart .cpast{fill:none;stroke:var(--ink);stroke-width:1.8;opacity:.75;stroke-linejoin:round}
+.tchart .cpd{fill:var(--ink);stroke:var(--surface);stroke-width:1.2}
+.tchart .cpd.fl{fill:var(--crit)}
+.tchart .cgrid.cnow{stroke:var(--ink);opacity:.55;stroke-dasharray:3 3}
+@media (max-width:1280px){.vtiles{grid-template-columns:repeat(3,minmax(0,1fr))}.vcharts{grid-template-columns:repeat(2,minmax(0,1fr))}.vform{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-width:860px){.vtiles{grid-template-columns:repeat(2,minmax(0,1fr))}.vcharts{grid-template-columns:1fr}.vform{grid-template-columns:repeat(2,minmax(0,1fr))}.hchart .ht{font-size:15px}}
+.flowsheet thead th .sub{display:block;text-transform:none;letter-spacing:0;font-size:11px;font-weight:400;color:var(--muted);font-family:var(--sans)}
+.labtrend .hchart{max-width:720px}

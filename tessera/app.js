@@ -342,8 +342,8 @@
     const acc = chartAccess(u, p);
     if (acc === 'none') { audit('chart-access', { patient: p, outcome: 'denied', detail: `role ${u.role} has no chart permission` }); return viewDenied(u, 'patient charts', true); }
     if (acc === 'btg-required') { audit('chart-access', { patient: p, outcome: 'blocked', detail: 'no care relationship' }); return viewBtg(u, p); }
-    const tabsFor = u.role === 'doctor' ? [['overview', 'Overview'], ['meds', 'Medications'], ['results', 'Results'], ['notes', 'Notes'], ['orders', 'Orders'], ['consents', 'Consents'], ['timeline', 'Timeline'], ['twin', 'Twin']]
-      : u.role === 'nurse' ? [['overview', 'Overview'], ['meds', 'Medications'], ['results', 'Results'], ['notes', 'Notes'], ['timeline', 'Timeline'], ['twin', 'Twin']] : [['meds', 'Medication profile']];
+    const tabsFor = u.role === 'doctor' ? [['overview', 'Overview'], ['vitals', 'Vitals'], ['meds', 'Medications'], ['results', 'Results'], ['notes', 'Notes'], ['orders', 'Orders'], ['consents', 'Consents'], ['timeline', 'Timeline'], ['twin', 'Twin']]
+      : u.role === 'nurse' ? [['overview', 'Overview'], ['vitals', 'Vitals'], ['meds', 'Medications'], ['results', 'Results'], ['notes', 'Notes'], ['timeline', 'Timeline'], ['twin', 'Twin']] : [['meds', 'Medication profile']];
     let tab = args[1] || tabsFor[0][0];
     if (!tabsFor.some((t) => t[0] === tab)) tab = tabsFor[0][0];
     const g = acc === 'btg' ? btgActive(u, p) : null;
@@ -376,7 +376,10 @@
       const v = p.vitals;
       const labs = p.labs.slice(0, 4).map((l) => `<tr><td>${esc(l.test)}</td><td class="num"><b>${esc(l.value)}</b> ${esc(l.unit)}</td><td>${l.flag ? pill(l.flag.length > 1 ? 'crit' : 'warn', l.flag) : ''}</td></tr>`);
       return `<div class="grid">${panel('Problem list', `<ul style="margin:0;padding-left:18px">${p.problems.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`)}
-        ${panel('Latest vitals', `<dl class="kv" style="margin:0"><div><dt>BP</dt><dd class="num" style="margin:0">${v.bp}</dd></div><div><dt>Heart rate</dt><dd class="num" style="margin:0">${v.hr}</dd></div><div><dt>Resp. rate</dt><dd class="num" style="margin:0">${v.rr}</dd></div><div><dt>Temp °F</dt><dd class="num" style="margin:0">${v.temp}</dd></div><div><dt>SpO₂</dt><dd class="num" style="margin:0">${v.spo2}%</dd></div></dl>`)}
+        ${panel('Latest vitals', (() => { const vs = T.hist ? T.hist.vitals(p) : []; const pv = vs[vs.length - 2]; const sp = (k) => (vs.length > 2 ? T.hist.spark(vs.slice(-12).map((x) => x[k]).filter((x) => x != null), { w: 64, h: 18 }) : '');
+          const dd = (k, cur) => { if (!pv || pv[k] == null) return ''; const d = cur - pv[k]; return Math.abs(d) < (k === 'temp' ? 0.05 : 0.5) ? '' : `<small class="dl ${d > 0 ? 'up' : 'down'}">${d > 0 ? '▲' : '▼'}${k === 'temp' ? Math.abs(d).toFixed(1) : Math.abs(Math.round(d))}</small>`; };
+          const sb = +String(v.bp).split('/')[0];
+          return `<dl class="kv vkv" style="margin:0"><div><dt>BP</dt><dd class="num" style="margin:0">${v.bp}${dd('sbp', sb)}${sp('sbp')}</dd></div><div><dt>Heart rate</dt><dd class="num" style="margin:0">${v.hr}${dd('hr', v.hr)}${sp('hr')}</dd></div><div><dt>Resp. rate</dt><dd class="num" style="margin:0">${v.rr}${dd('rr', v.rr)}${sp('rr')}</dd></div><div><dt>Temp °F</dt><dd class="num" style="margin:0">${v.temp}${dd('temp', v.temp)}${sp('temp')}</dd></div><div><dt>SpO₂</dt><dd class="num" style="margin:0">${v.spo2}%${dd('spo2', v.spo2)}${sp('spo2')}</dd></div></dl>${vs.length && (u.role === 'doctor' || u.role === 'nurse') ? `<p class="kpi-note" style="margin:8px 0 0">Charted ${esc(T.hist.fmtT(vs[vs.length - 1].at))} · <a href="#patient-${p.id}-vitals">Flowsheet and trends</a></p>` : ''}`; })())}
         ${panel('Recent results', table(['Test', 'Value', 'Flag'], labs), '', true)}</div>`;
     },
     meds(u, p) {
@@ -391,10 +394,11 @@
         ${panel('Medications', table(['Drug', 'Dose', 'Route', 'Frequency', 'Status'], rows), u.role === 'nurse' ? '<a href="#mar">Open eMAR</a>' : u.role === 'doctor' ? '<a href="#orders">Open CPOE</a>' : '<a href="#verify">Verification queue</a>', true)}${extra}`;
     },
     results(u, p) {
-      const rows = p.labs.map((l) => `<tr><td>${esc(l.test)}<span class="sub mono">LOINC ${l.loinc}</span></td><td class="num"><b>${esc(l.value)}</b> ${esc(l.unit)}</td><td class="mono">${esc(l.ref)}</td><td>${l.flag ? pill(l.flag.length > 1 || l.flag === 'A' ? 'crit' : 'warn', l.flag) : pill('ok', 'Normal')}</td><td>${dayStr(l.dOff)}</td></tr>`);
-      const lis = (S.labOrders || []).filter((o) => o.patient === p.id && o.status === 'Released' && !p.labs.some((l) => l.fromOrder === o.id)).map((o) => `<tr><td>${esc(o.test)}<span class="sub mono">LOINC ${o.loinc} · released</span></td><td class="num"><b>${esc(o.value)}</b> ${esc(o.unit)}</td><td class="mono">${esc(o.ref)}</td><td>${o.flag ? pill('crit', o.flag) : pill('ok', 'Normal')}</td><td>Today</td></tr>`);
+      const rows = p.labs.map((l) => { const c = T.hist ? T.hist.labCell(p, l) : { spark: '', delta: '' }; const open = UI.labTrend === p.id + '|' + l.test;
+        return `<tr><td>${esc(l.test)}<span class="sub mono">LOINC ${l.loinc}</span></td><td class="num"><b>${esc(l.value)}</b> ${esc(l.unit)}${c.delta}</td><td>${c.spark}</td><td class="mono">${esc(l.ref)}</td><td>${l.flag ? pill(l.flag.length > 1 || l.flag === 'A' ? 'crit' : 'warn', l.flag) : pill('ok', 'Normal')}</td><td>${dayStr(l.dOff)}</td></tr>${open ? `<tr class="trendrow"><td colspan="6">${T.hist.labDetail(p, l.test)}</td></tr>` : ''}`; });
+      const lis = (S.labOrders || []).filter((o) => o.patient === p.id && o.status === 'Released' && !p.labs.some((l) => l.fromOrder === o.id)).map((o) => `<tr><td>${esc(o.test)}<span class="sub mono">LOINC ${o.loinc} · released</span></td><td class="num"><b>${esc(o.value)}</b> ${esc(o.unit)}</td><td class="mono">${esc(o.ref)}</td><td></td><td>${o.flag ? pill('crit', o.flag) : pill('ok', 'Normal')}</td><td>Today</td></tr>`);
       const imaging = (S.radOrders || []).filter((o) => o.patient === p.id).map((o) => `<tr><td><b>${esc(o.study)}</b><span class="sub mono">${o.acc}</span></td><td>${statePill(o.status)}</td><td>${o.report && o.status === 'Reported' ? `${o.report.critical ? pill('crit', 'Critical finding') + ' ' : ''}${esc(o.report.impression)}<span class="sub">${esc(o.report.by)}</span>` : '<span class="muted">No final report yet</span>'}</td></tr>`);
-      return panel('Laboratory results', table(['Test', 'Value', 'Reference', 'Flag', 'Date'], rows.concat(lis)), '', true) + panel('Imaging', table(['Study', 'Status', 'Impression'], imaging), '', true);
+      return panel('Laboratory results', table(['Test', 'Value', 'Trend', 'Reference', 'Flag', 'Date'], rows.concat(lis)), '', true) + panel('Imaging', table(['Study', 'Status', 'Impression'], imaging), '', true);
     },
     notes(u, p) {
       const notes = S.notes.filter((n) => n.patient === p.id).sort((a, b) => a.mOff - b.mOff);

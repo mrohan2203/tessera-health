@@ -62,7 +62,8 @@
       let value = l.value, flag = l.flag;
       if (ov && ov[l.test] != null && FLAG[l.test]) { value = fmt[l.test](ov[l.test]); flag = FLAG[l.test](ov[l.test], l); }
       const crit = flag && (flag.length > 1 || flag === 'A');
-      ev.push([crit ? 'Critical lab' : flag ? 'Abnormal lab' : 'Lab', `${l.test} ${value} ${l.unit || ''}${ov && ov[l.test] != null ? ' (projected)' : ''}`.trim()]);
+      const dl = !ov && T.hist ? T.hist.labDelta(p, l.test) : null;
+      ev.push([crit ? 'Critical lab' : flag ? 'Abnormal lab' : 'Lab', `${l.test} ${value} ${l.unit || ''}${ov && ov[l.test] != null ? ' (projected)' : ''}${dl && dl.dir ? ` (${dl.dir > 0 ? '↑' : '↓'} from ${dl.prev.raw} ${T.hist.dayLbl(dl.prev.at)})` : ''}`.trim()]);
       level = Math.max(level, crit ? 2 : flag ? 1 : 0);
     });
     const v = p.vitals || {}; const sbp = num(String(v.bp).split('/')[0]);
@@ -242,7 +243,10 @@
     const kAt = o('k-treat').at || 0;
     if (kL) {
       const k0 = num(kL.value);
-      const drift = (raisers.length ? 0.005 * raisers.length : heldRaisers.length ? -0.003 : (4.4 - k0) / 120) + (ckd ? 0.002 : 0);
+      let drift = (raisers.length ? 0.005 * raisers.length : heldRaisers.length ? -0.003 : (4.4 - k0) / 120) + (ckd ? 0.002 : 0);
+      const obsK = T.hist && T.hist.slope(p, kL.test, 96); // measured trend over the last 4 days
+      if (obsK != null && !heldRaisers.length) drift = clamp(0.5 * drift + 0.5 * obsK, -0.02, 0.02);
+      out.kObs = obsK;
       out.k = HOURS.map((t) => {
         let k = k0 + drift * t;
         const s = t - kAt;
@@ -267,7 +271,9 @@
     const cL = lab(p, /^creatinine/i);
     if (cL) {
       const c0 = num(cL.value), hi = refHi(cL, 1.3);
-      const d = (raisers.length && ckd ? 0.0015 * raisers.length : 0) + (heldRaisers.length ? -0.001 : 0) + (n0 >= 5 && !on('rrt') ? 0.002 : 0) + (raisers.some(([m]) => NSAID.test(m.drug)) ? 0.002 : 0);
+      let d = (raisers.length && ckd ? 0.0015 * raisers.length : 0) + (heldRaisers.length ? -0.001 : 0) + (n0 >= 5 && !on('rrt') ? 0.002 : 0) + (raisers.some(([m]) => NSAID.test(m.drug)) ? 0.002 : 0);
+      const obsC = T.hist && T.hist.slope(p, cL.test, 96);
+      if (obsC != null && !heldRaisers.length) d = clamp(0.5 * d + 0.5 * obsC, -0.01, 0.01);
       out.cr = HOURS.map((t) => clamp(c0 + d * t, Math.min(c0, hi - 0.1), 9));
     }
     if (isDM(p) || lv.some((l) => l.id === 'k-treat') || lab(p, /glucose/i)) {
@@ -435,22 +441,24 @@
   let GEO = {};
   const CW = 560, CH = 200, CL = 46, CR = 14, CT = 14, CB = 28;
   function chart(m, base, sim, h, sd) {
-    const N = sim.length, i = Math.round(h / H * (N - 1));
+    const N = sim.length, i = Math.round(h / H * (N - 1)), past = (m.past || []).filter((q) => q.h >= -72 && q.h <= 0), tmin = past.length ? -72 : 0;
     const up = sd ? sim.map((v, j) => v + 1.28 * sd[Math.round(j / (N - 1) * H)]) : null, dn = sd ? sim.map((v, j) => v - 1.28 * sd[Math.round(j / (N - 1) * H)]) : null;
-    const vals = [...base, ...sim, ...(up || []), ...(dn || []), ...(m.lo != null ? [m.lo, m.hi] : []), ...(m.th || []).map((t) => t.v)];
+    const vals = [...base, ...sim, ...past.map((q) => q.v), ...(up || []), ...(dn || []), ...(m.lo != null ? [m.lo, m.hi] : []), ...(m.th || []).map((t) => t.v)];
     let y0 = m.zero ? 0 : Math.min(...vals), y1 = Math.max(...vals); const pad = (y1 - y0) * 0.08 || 1; if (!m.zero) y0 -= pad; y1 += pad;
-    const x = (j) => CL + j * (CW - CL - CR) / (N - 1), y = (v) => CT + (1 - (v - y0) / (y1 - y0)) * (CH - CT - CB);
+    const xt = (t) => CL + (t - tmin) / (H - tmin) * (CW - CL - CR), x = (j) => xt(j / (N - 1) * H), y = (v) => CT + (1 - (v - y0) / (y1 - y0)) * (CH - CT - CB);
     const path = (a) => a.map((v, j) => `${j ? 'L' : 'M'}${x(j).toFixed(1)} ${y(v).toFixed(1)}`).join('');
     GEO[m.id] = { N, x: sim.map((_, j) => x(j)), yb: base.map(y), ys: sim.map(y), base, sim, f: m.f };
     const band = m.lo != null ? `<rect class="cband" x="${CL}" width="${CW - CL - CR}" y="${y(Math.min(m.hi, y1))}" height="${Math.max(0, y(Math.max(m.lo, y0)) - y(Math.min(m.hi, y1)))}"/>` : '';
     const unc = up ? `<path class="cunc" d="${path(up)}${dn.map((v, j) => `L${x(N - 1 - j).toFixed(1)} ${y(dn[N - 1 - j]).toFixed(1)}`).join('')}Z"/>` : '';
     const ths = (m.th || []).filter((t) => t.v > y0 && t.v < y1).map((t) => `<line class="cth ${t.up === 'crit' || t.down === 'crit' ? 'crit' : ''}" x1="${CL}" x2="${CW - CR}" y1="${y(t.v)}" y2="${y(t.v)}"/><text class="ctl" x="${CW - CR}" y="${y(t.v) - 3}" text-anchor="end">${esc(t.tag || m.f(t.v))}</text>`).join('');
-    const xt = [0, 12, 24, 36, 48, 60, 72].map((hh) => `<text class="ctx" x="${x(hh / H * (N - 1))}" y="${CH - 8}" text-anchor="middle">${hh % 24 === 0 || hh === 12 ? hLabel(hh) : ''}</text><line class="cgrid" x1="${x(hh / H * (N - 1))}" x2="${x(hh / H * (N - 1))}" y1="${CT}" y2="${CH - CB}"/>`).join('');
+    const tk = past.length ? [-72, -48, -24, 0, 24, 48, 72] : [0, 12, 24, 36, 48, 60, 72];
+    const xtk = tk.map((hh) => `<text class="ctx" x="${xt(hh)}" y="${CH - 8}" text-anchor="middle">${past.length || hh % 24 === 0 || hh === 12 ? (hh < 0 ? `−${-hh} h` : hLabel(hh)) : ''}</text><line class="cgrid ${hh === 0 && past.length ? 'cnow' : ''}" x1="${xt(hh)}" x2="${xt(hh)}" y1="${CT}" y2="${CH - CB}"/>`).join('');
+    const pastSvg = past.length ? `<rect class="cpastbg" x="${CL}" y="${CT}" width="${xt(0) - CL}" height="${CH - CT - CB}"/><polyline class="cpast" points="${past.map((q) => `${xt(q.h).toFixed(1)},${y(q.v).toFixed(1)}`).join(' ')} ${xt(0).toFixed(1)},${y(sim[0]).toFixed(1)}"/>${past.filter((q) => !q.interp).map((q) => `<circle class="cpd ${q.flag ? 'fl' : ''}" r="3" cx="${xt(q.h).toFixed(1)}" cy="${y(q.v).toFixed(1)}"><title>Measured ${esc(m.f(q.v))} at ${q.h} h</title></circle>`).join('')}<text class="ctl" x="${CL + 4}" y="${CT + 11}">Measured</text><text class="ctl" x="${xt(0) + 4}" y="${CT + 11}">Forecast</text>` : '';
     const ticks = Array.from({ length: 4 }, (_, k) => y0 + (y1 - y0) * (k + 0.5) / 4);
     const yt = ticks.map((v) => `<text class="ctx" x="${CL - 6}" y="${y(v) + 4}" text-anchor="end">${esc(m.f(v))}</text>`).join('');
     const marks = (m.marks || []).map((t) => `<line class="cdose" x1="${x(t / H * (N - 1))}" x2="${x(t / H * (N - 1))}" y1="${CH - CB}" y2="${CH - CB - 6}"/>`).join('');
     return `<svg class="tchart" viewBox="0 0 ${CW} ${CH}" data-m="${m.id}" role="img" aria-label="${esc(m.name)} over 72 hours">
-      ${band}${xt}${unc}${ths}${yt}${marks}
+      ${band}${xtk}${pastSvg}${unc}${ths}${yt}${marks}
       <path class="cbase" d="${path(base)}"/><path class="csim" d="${path(sim)}"/>
       <line class="cscrub" x1="${x(i)}" x2="${x(i)}" y1="${CT}" y2="${CH - CB}"/>
       <circle class="cdot b" r="3.5" cx="${x(i)}" cy="${y(base[i])}"/><circle class="cdot s" r="4.5" cx="${x(i)}" cy="${y(sim[i])}"/></svg>`;
@@ -632,10 +640,29 @@
     return `<div class="syscards">${cards}</div>`;
   }
 
+  /* Measured values from the flowsheet and lab history, as hours before now (for the forecast charts). */
+  function measuredPast(p) {
+    if (!T.hist) return {};
+    const now = Date.now(), toH = (at) => Math.round((at - now) / 3600e3 * 10) / 10;
+    const out = {};
+    [['k', /^potassium$/i], ['inr', /^INR$/i], ['cr', /^creatinine$/i], ['glu', /^glucose$/i]].forEach(([id, re]) => {
+      const s = T.hist.labs(p).find((x) => re.test(x.test)); if (!s) return;
+      const pts = s.pts.map((q) => ({ h: Math.min(0, toH(q.at)), v: q.v, flag: q.flag }));
+      const k = pts.findIndex((q) => q.h >= -72);
+      if (k > 0) { const a = pts[k - 1], b = pts[k]; pts.splice(k, 0, { h: -72, v: a.v + (b.v - a.v) * (-72 - a.h) / (b.h - a.h), interp: true }); }
+      out[id] = pts;
+    });
+    const vs = T.hist.vitals(p);
+    out.hr = vs.map((q) => ({ h: Math.min(0, toH(q.at)), v: q.hr, flag: q.hr > 110 || q.hr < 50 }));
+    out.news = vs.map((q) => ({ h: Math.min(0, toH(q.at)), v: q.news, flag: q.news >= 5 })).filter((q) => q.v != null);
+    return out;
+  }
   const evRow = (e) => `<li class="${e.cls}"><span class="mono">${hLabel(e.h)}</span>${esc(e.text)}</li>`;
   function vForecast(ctx) {
     const { p, sim, base, h, ev, evB } = ctx;
     const ms = METRICS(p).filter((m) => sim[m.id]);
+    const past = measuredPast(p);
+    ms.forEach((m) => { m.past = past[m.id] || []; });
     const charts = ms.map((m) => panel(`${esc(m.name)}${m.unit ? ` <small class="muted">${esc(m.unit)}</small>` : ''}`,
       `<div class="tread"><span class="s"><i></i>Your levers <b data-read="${m.id}">${m.f(sim[m.id][h])}</b></span><span class="b"><i></i>Record as is <b data-read-b="${m.id}">${m.f(base[m.id][h])}</b></span><span class="muted">Normal ${m.f(m.lo)}–${m.f(m.hi)}${m.id === 'glu' ? ` · ${esc(sim.gluSrc)}` : ''}</span></div>${chart(m, base[m.id], sim[m.id], h, sim.sd[m.id])}`)).join('');
     return `${ctx.storyHtml}<div class="panel twin-scrub-panel"><div class="body">${scrubber(p, h)}</div></div>
@@ -643,7 +670,7 @@
       <div class="twin-charts">${charts}</div>
       <div class="twin-ev">${panel('Predicted events · your levers', ev.length ? `<ul class="evlist">${ev.map(evRow).join('')}</ul>` : '<p class="muted">No thresholds crossed in 72 h.</p>')}
       ${panel('Predicted events · record as is', evB.length ? `<ul class="evlist">${evB.map(evRow).join('')}</ul>` : '<p class="muted">No thresholds crossed in 72 h.</p>')}
-      ${panel('How the forecast works', `<ul class="howlist"><li>Hourly steps for 72 h. Each lab starts at its latest result and follows a simple curve set by the drugs and treatments in play.</li><li>Insulin moves potassium into cells within 2 h and wears off by about 12 h; a binder keeps lowering it. Starting later shifts the whole curve. Holding an ARB stops the upward drift.</li><li>With warfarin held INR falls slowly (about 40 h time constant). Vitamin K reverses it faster and deeper the higher the dose; 10 mg also blunts a later warfarin restart. A restart lifts INR after about a day.</li><li>Glucose follows meals and dips about an hour after insulin.</li><li>Potassium above 6.5 slows the heart and adds to NEWS2.</li><li>The shaded band widens with time because the further out, the less certain. Illustrative only: not validated, not for treatment decisions.</li></ul>`)}</div>`;
+      ${panel('How the forecast works', `<ul class="howlist"><li>Hourly steps for 72 h. The left half of each chart is what was measured (flowsheet and lab history); the forecast starts from the latest result and blends the measured trend of the last 4 days with the effect of the drugs and treatments in play.</li><li>Insulin moves potassium into cells within 2 h and wears off by about 12 h; a binder keeps lowering it. Starting later shifts the whole curve. Holding an ARB stops the upward drift.</li><li>With warfarin held INR falls slowly (about 40 h time constant). Vitamin K reverses it faster and deeper the higher the dose; 10 mg also blunts a later warfarin restart. A restart lifts INR after about a day.</li><li>Glucose follows meals and dips about an hour after insulin.</li><li>Potassium above 6.5 slows the heart and adds to NEWS2.</li><li>The shaded band widens with time because the further out, the less certain. Illustrative only: not validated, not for treatment decisions.</li></ul>`)}</div>`;
   }
 
   function vPK(ctx) {
@@ -750,7 +777,8 @@
     const cf = confidence(p);
     const ago = (d) => (d == null || d === 0 ? 'Today' : d === -1 ? 'Yesterday' : `${-d} days ago`);
     const inputs = [['Vital signs', `HR ${p.vitals.hr} · BP ${p.vitals.bp} · RR ${p.vitals.rr} · SpO₂ ${p.vitals.spo2}% · ${p.vitals.temp}°F`, 'Nursing flowsheet', 'Latest']]
-      .concat(p.labs.map((l) => [l.test, `${l.value} ${l.unit || ''}${l.flag ? ` (${l.flag})` : ''}`, l.outside ? 'Outside record' : 'Laboratory', ago(l.dOff)]))
+      .concat(T.hist ? [['Vitals history', `${T.hist.vitals(p).length} sets over 72 h`, 'Nursing flowsheet', 'Every 4 h']] : [])
+      .concat(p.labs.map((l) => { const s = T.hist && T.hist.lab(p, l.test); return [l.test, `${l.value} ${l.unit || ''}${l.flag ? ` (${l.flag})` : ''}${s && s.pts.length > 1 ? ` · ${s.pts.length - 1} prior` : ''}`, l.outside ? 'Outside record' : 'Laboratory', ago(l.dOff)]; }))
       .concat([['Problem list', `${p.problems.length} coded problems`, 'Chart', 'Current'], ['Medications', `${p.meds.length} on the chart`, 'Orders / eMAR', 'Current'],
         ['Home medications', `${((T.SEED.homeMeds || {})[p.id] || []).length} on the home list`, 'Med reconciliation', 'Admission'], ['Allergies', p.allergiesUnknown ? 'Unknown' : p.allergies.map((a) => a.agent).join(', ') || 'None known', 'Chart', 'Current'],
         ['Weight / height', p.weightKg ? `${p.weightKg} kg · ${p.heightCm} cm` : 'Missing', 'Chart', 'Admission'], ['Age / sex', `${p.age} · ${p.sex}`, 'Registration', '—']])
@@ -758,7 +786,7 @@
       .concat((S().results || []).filter((r) => r.patient === p.id).map((r) => ['Critical result', `${r.test} ${r.value} · ${r.state}`, 'Closed-loop results', r.mOff < 120 ? `${r.mOff} min ago` : `${Math.round(r.mOff / 60)} h ago`]));
     const stream = T.records && T.records.timelineEvents ? T.records.timelineEvents(p).slice(0, 10) : [];
     const ring = `<svg class="cring" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="50" class="trk"/><circle cx="60" cy="60" r="50" class="val ${cf.score < 60 ? 'crit' : cf.score < 80 ? 'warn' : ''}" stroke-dasharray="${(cf.score / 100 * 314).toFixed(1)} 314" transform="rotate(-90 60 60)"/><text x="60" y="66" text-anchor="middle">${cf.score}%</text></svg>`;
-    const models = [['Labs', 'Rule-based hourly curves per lab, coupled (potassium → heart rate and NEWS2)'], ['Uncertainty', '80% band from an error that grows linearly with time'], ['Drug levels', 'One-compartment PK, textbook parameters, CrCl-adjusted for renal drugs'], ['Monitor', 'Waveforms synthesised from projected rate, rhythm, SpO₂, RR and potassium'], ['Risks', 'Points-based, with published CHA₂DS₂-VASc stroke rates'], ['Anatomy', 'BodyParts3D adult male reference (2,234 structures, FMA-coded); rules map the record to exact structures']];
+    const models = [['Labs', 'Hourly curves per lab, starting from the measured 4-day trend and coupled (potassium → heart rate and NEWS2)'], ['Uncertainty', '80% band from an error that grows linearly with time'], ['Drug levels', 'One-compartment PK, textbook parameters, CrCl-adjusted for renal drugs'], ['Monitor', 'Waveforms synthesised from projected rate, rhythm, SpO₂, RR and potassium'], ['Risks', 'Points-based, with published CHA₂DS₂-VASc stroke rates'], ['Anatomy', 'BodyParts3D adult male reference (2,234 structures, FMA-coded); rules map the record to exact structures']];
     return `<div class="twin-src">
       ${panel('Twin confidence', `<div class="conf">${ring}<ul class="checks">${cf.checks.map(([t, ok]) => `<li class="${ok ? 'ok' : 'miss'}"><i>${ok ? '✓' : '!'}</i>${esc(t)}</li>`).join('')}</ul></div><p class="muted" style="font-size:12.5px;margin-top:10px">Confidence is the share of these inputs that are present and fresh. Missing items make the twin less reliable, not wrong.</p>`)}
       ${panel('Never read by the twin', `<p style="margin:0 0 8px">Least privilege applies to the model too. It works from clinical facts only and never reads:</p><ul class="never"><li>Name and date of birth (age only)</li><li>MRN, phone and address</li><li>Payer, member ID and charges</li><li>Free-text notes</li></ul><p class="muted" style="font-size:12.5px">Opening the twin is logged as a chart view; every simulation, dose change and scenario is logged as <span class="mono">twin-simulate</span> or <span class="mono">twin-scenario</span>.</p>`)}

@@ -67,6 +67,7 @@
     const dx = p.problems.filter((_, i) => f['pr_' + i]).concat(f.newdx ? [f.newdx] : []);
     const text = `CC: ${f.cc}\nHPI: ${f.hpi || '—'}\nVitals: BP ${vit.bp}, HR ${vit.hr}, RR ${vit.rr}, T ${vit.temp} °F, SpO₂ ${vit.spo2}%${f.v_glucose ? `, glucose ${f.v_glucose} mg/dL` : ''}${f.v_weight ? `, weight ${f.v_weight} kg` : ''}\nROS: ${ros}\nExam: ${exam}\nAssessment: ${dx.join('; ') || '—'}\nPlan: ${f.plan}\nFollow-up: ${f.fu}`;
     S().notes.push({ id: nid('N'), patient: p.id, author: me().name, kind: 'OP case sheet', mOff: 0, at: new Date().toISOString(), signed: true, text, addenda: [] });
+    if (T.hist) { const [sb, db] = vit.bp.split('/').map(Number); T.hist.logVitals(p, { hr: vit.hr, sbp: sb, dbp: db, rr: vit.rr, temp: vit.temp, spo2: vit.spo2 }, 'OP case sheet'); }
     T.patchPatient(p.id, Object.assign({ vitals: vit }, f.newdx ? { problems: p.problems.concat([f.newdx]) } : {}, f.v_weight ? { weightKg: +f.v_weight } : {}));
     const ap = S().appts.find((a) => a.patient === p.id && a.provider === me().id && a.status !== 'Completed'); if (ap) ap.status = 'Completed';
     delete S().caseDrafts[p.id]; audit('casesheet-sign', { patient: p }); save(); render(); toast('Case sheet signed. Vitals and assessment are in the chart.');
