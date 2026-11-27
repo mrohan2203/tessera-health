@@ -118,13 +118,13 @@
         if (u.dept === 'EMER') top.splice(1, 0, ['er', 'Emergency board']);
         if (u.dept === 'SURG') top.splice(1, 0, ['ot', 'OT suite']);
         return [['Overview', top], ['Clinic', [['ambient', 'Ambient Doctor'], ['casesheet', 'OP case sheet'], ['rx', 'Prescriptions'], ['schedule', 'Clinic schedule'], ['encounters', 'Encounters'], ['tele', 'Telemedicine']]],
-          ['Inpatient', [['beds', 'Bed board'], ['icu', 'ICU board'], ['assess', 'Risk assessments'], ['medrec', 'Med reconciliation'], ['handover', 'Handover (ISBAR)'], ['pathways', 'Clinical pathways'], ['discharge', 'Discharge']]],
+          ['Inpatient', [['beds', 'Bed board'], ['icu', 'ICU board'], ['events', 'Rapid response'], ['assess', 'Risk assessments'], ['medrec', 'Med reconciliation'], ['handover', 'Handover (ISBAR)'], ['pathways', 'Clinical pathways'], ['discharge', 'Discharge']]],
           ['Orders & results', [['orders', 'Orders (CPOE)'], ['results', 'Critical results'], ['gaps', 'Care gaps']]], ['Records', [['docintel', 'Document intelligence'], ['consents', 'Consents'], ['sdoh', 'Social needs']]], safety];
       }
       case 'nurse':
         if (u.unit === 'PERIOP') return [['Peri-op', [['home', 'Peri-op board'], ['mywork', 'My work'], ['ot', 'OT suite'], ['daycare', 'Day care'], ['patients', 'Patients'], ['twins', 'Patient twins']]], ['Inpatient', [['assess', 'Risk assessments'], ['handover', 'Handover (ISBAR)'], ['beds', 'Bed board']]], safety];
         return [['Unit', [['home', 'Unit board'], ['mywork', 'My work'], ['patients', 'Unit patients'], ['twins', 'Patient twins'], ['mar', 'eMAR'], ['results', 'Critical results']]],
-          ['Inpatient', [['beds', 'Bed board'], ['icu', 'ICU board'], ['assess', 'Risk assessments'], ['sdoh', 'Social needs'], ['handover', 'Handover (ISBAR)'], ['discharge', 'Discharge']]], ['Safety', [['infection', 'Infection control'], ['report', 'Report incident']]]];
+          ['Inpatient', [['beds', 'Bed board'], ['icu', 'ICU board'], ['events', 'Rapid response'], ['assess', 'Risk assessments'], ['sdoh', 'Social needs'], ['handover', 'Handover (ISBAR)'], ['discharge', 'Discharge']]], ['Safety', [['infection', 'Infection control'], ['report', 'Report incident']]]];
       case 'pharmacist': return [['Pharmacy', [['home', 'Overview'], ['mywork', 'My work'], ['verify', 'Order verification'], ['inventory', 'Inventory'], ['patients', 'Medication profiles']]], ['Inpatient', [['medrec', 'Med reconciliation'], ['discharge', 'Discharge']]], safety];
       case 'lab': return [['Laboratory', [['home', 'Lab overview'], ['mywork', 'My work'], ['lab', 'Lab worklist'], ['bloodbank', 'Blood bank']]], safety];
       case 'pathologist': return [['Laboratory', [['home', 'Lab overview'], ['mywork', 'My work'], ['lab', 'Verification queue'], ['bloodbank', 'Blood bank']]], safety];

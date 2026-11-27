@@ -43,6 +43,7 @@ To install on a real iPhone or share through TestFlight, see [ios/README.md](ios
 - **Break-the-glass** for out-of-scope emergencies, with a reason and an after-the-fact review.
 - **Two-person rules** for role changes and blood issue. Nobody approves their own request.
 - **Vitals and lab history:** a nursing flowsheet (72 hours of charted sets, nurses and doctors can chart new ones, audited and fed straight into NEWS2 and the twin) and prior values for every numeric lab, with sparklines, “↑ from 5.7 yesterday” deltas and a full trend view. Patients see their own trends in the portal.
+- **Rapid response and code blue:** called from the Vitals tab when NEWS2 reaches 5. A live, timed record with CPR-cycle and adrenaline timers, one-tap interventions, rhythm checks and shocks, drug buttons chosen from the record and run through the allergy and potassium check, reversible causes (Hs and Ts) pre-flagged from labs and problems, team arrival times, and vitals that also update the chart. DNR/DNI blocks CPR until a documented reversal. Closing drafts a note from the log; signing files it and adds a post-event review to the care plan.
 - **Care plan:** goals and tasks per organ system drafted from the record and accepted by a clinician. Goals track a lab or vital target live (met, improving, worsening); tasks have an owner and a due time and close themselves when the evidence arrives (a repeat lab, an acknowledged critical result, signed med reconciliation, vitals on schedule). Planned drugs are checked against allergies with cross-reactivity, potassium, anticoagulants, duplicates and kidney function; a blocked drug needs a doctor's documented override before it can go to orders.
 - **Patient twins list:** everyone in your care ranked critical, watch or stable from their digital twin, with NEWS2 and the most abnormal lab as sparklines, what changed in the last 24 hours, the next forecast danger and organ-system dots. Care team only, audited with patient tokens.
 - **Ask the twin:** questions about a patient (“What changed in the last 24 hours?”, “Which medications raise potassium?”) answered only from a numbered list of facts drawn from the record, with every claim cited and linked back to the chart. Claude answers on the published link; built-in rules answer offline. Identifiers and free-text notes are never sent, and every question is audited.
@@ -69,7 +70,7 @@ Two browser-run suites cover the app. Run them in the browser console at http://
 **Reset demo data**:
 
 ```js
-await import('/tests/usecases.js?' + Date.now()).then((m) => m.run())   // 70 end-to-end workflows
+await import('/tests/usecases.js?' + Date.now()).then((m) => m.run())   // 71 end-to-end workflows
 await import('/tests/sweep.js?' + Date.now()).then((m) => m.run())      // every page, action, form and dialog
 ```
 
