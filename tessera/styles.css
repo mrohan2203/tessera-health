@@ -1357,3 +1357,37 @@ button.tw-tile{cursor:pointer}button.tw-tile:hover{border-color:var(--accent)}bu
 .rr-head > div:first-child{flex:1 1 320px;align-items:flex-start;text-align:left}
 .rr-h{flex-direction:row!important}.rr-h input{width:auto!important;flex:none;margin:3px 0 0}
 @media (max-width:860px){.rr-clocks{display:grid;grid-template-columns:1fr 1fr;width:100%}.rr-clocks > div{min-width:0}}
+
+/* ---------- Patient portal: My health twin ---------- */
+.my-twin{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:14px;align-items:start}
+.my-twin .panel,.my-col .panel{margin:0}
+.my-col{display:flex;flex-direction:column;gap:14px}
+.my-map{display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:center}
+.my-map .ptwin-body{width:200px}
+.my-rows{display:flex;flex-direction:column;gap:6px}
+.my-sys{all:unset;box-sizing:border-box;cursor:pointer;display:grid;grid-template-columns:12px 1fr;gap:10px;align-items:center;padding:8px 11px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2)}
+.my-sys:hover,.my-sys.on{border-color:var(--accent)}.my-sys:focus-visible{outline:2px solid var(--accent)}
+.my-sys i{width:12px;height:12px;border-radius:50%;background:var(--t3,#4fbfc3);opacity:.6}
+.my-sys.lv1 i{background:var(--wr-yellow);opacity:1}.my-sys.lv2 i{background:var(--wr-red);opacity:1}
+.my-sys b{display:block;font-size:14px;font-weight:600}.my-sys small{font-size:12.5px;color:var(--muted)}
+.my-sys.lv1 small{color:var(--warn)}.my-sys.lv2 small{color:var(--crit);font-weight:600}
+.my-detail{margin-top:14px;padding:14px 16px;border-radius:12px;background:var(--surface-2);border-left:5px solid var(--ok)}
+.my-detail.lv1{border-left-color:var(--wr-yellow)}.my-detail.lv2{border-left-color:var(--wr-red)}
+.my-detail h3{font-size:16px;margin-bottom:6px}.my-detail p{font-size:15px;line-height:1.6;margin:0}
+.my-vitals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.my-vital{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:10px;background:var(--surface-2);border:1px solid var(--line)}
+.my-vital span{font-size:12.5px;color:var(--muted);font-weight:600}.my-vital b{font-family:var(--display);font-size:24px;font-weight:800}.my-vital small{font-size:11.5px;color:var(--muted)}
+.my-goals,.my-qs,.my-labs,.my-meds{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.my-goals li{display:flex;justify-content:space-between;gap:10px;padding:9px 12px;border-radius:10px;background:var(--surface-2);border-left:4px solid var(--wr-yellow);font-size:14px}
+.my-goals li.met{border-left-color:var(--ok)}.my-goals li.improving{border-left-color:var(--info)}
+.my-goals li span{color:var(--muted);font-size:13px;white-space:nowrap}
+.my-qs li{padding:9px 12px 9px 34px;border-radius:10px;background:var(--surface-2);font-size:14.5px;position:relative}
+.my-qs li::before{content:"?";position:absolute;left:11px;top:8px;width:16px;height:16px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-size:11px;font-weight:700;display:grid;place-items:center}
+.my-labs li{display:grid;grid-template-columns:minmax(0,1.6fr) 150px 110px minmax(0,1fr);gap:14px;align-items:center;padding:11px 14px;border-radius:11px;background:var(--surface-2);border-left:4px solid var(--ok)}
+.my-labs li.flag{border-left-color:var(--wr-yellow)}
+.my-labs b{font-size:14.5px}.my-labs small{display:block;font-size:12.5px;color:var(--muted);line-height:1.4}
+.my-num b{font-family:var(--display);font-size:22px;font-weight:800}.my-num span{font-size:12px;color:var(--muted);margin-left:4px}
+.my-dir{font-size:13px!important;color:var(--ink)!important}
+.my-meds li{display:flex;flex-direction:column;gap:2px;padding:10px 13px;border-radius:10px;background:var(--surface-2);font-size:14.5px}
+@media (max-width:1100px){.my-twin{grid-template-columns:1fr}}
+@media (max-width:860px){.my-map{grid-template-columns:120px 1fr}.my-map .ptwin-body{width:120px}.my-vitals{grid-template-columns:1fr}.my-labs li{grid-template-columns:1fr auto;gap:6px 12px}.my-labs li > div:first-child{grid-column:1/-1}.my-dir{grid-column:1/-1}}

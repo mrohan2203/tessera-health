@@ -58,7 +58,7 @@ export async function run(opts = {}) {
         const btn = [...document.querySelectorAll('#app [data-act]')].find((b) => { const k = b.dataset.act + '|' + JSON.stringify(b.dataset); return !SKIP.has(b.dataset.act) && !seen.has(k) && !b.disabled && b.offsetParent !== null; });
         if (!btn) break; seen.add(btn.dataset.act + '|' + JSON.stringify(btn.dataset));
         ctx = `${u.username} › #${r} › [${btn.dataset.act}]`;
-        btn.click(); stats.actions++; await wait(40); await handleModal(); scan();
+        if (btn.click) btn.click(); else btn.dispatchEvent(new MouseEvent('click', { bubbles: true })); stats.actions++; await wait(40); await handleModal(); scan();
         if (location.hash !== '#' + r && !location.hash.startsWith('#' + r + '-')) await go(r);
       }
       // every form on the page

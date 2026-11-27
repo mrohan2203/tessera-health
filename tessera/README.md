@@ -92,6 +92,7 @@ The sign-in screen groups one-click demo buttons by area. They still go through 
 | Capacity forecast | Bed boards show now, not tomorrow | As catherine.ceo move the "what if the ER sends more" slider and read the drivers behind each number |
 | Family updates | Families phone the unit for status; staff can't share details | radha.patient's spouse is listed; when jamal.periop completes her OT case, a status-only message goes out automatically |
 | Vitals and lab history | Charts show one number with no past, so nobody sees direction | As grace.rn open Harish Malhotra › Vitals: 72 hours of flowsheet sets, six trend charts, and a form to chart a new set (it updates NEWS2, alerts and the twin, and is audited). Results shows a sparkline and “↑ from” for every lab; click one for its full trend. The twin's forecasts start from the measured trend |
+| My health twin (patient) | Patients get raw numbers and codes, or nothing at all | As radha.patient open My health twin: body systems in plain words (tap Bones and joints for her new knee), vitals and results with what each test means, care-plan goals, what each medicine is for, and questions to ask. No forecasts or risk scores; opening it is logged as individual access |
 | Rapid response and code blue | Resuscitation is documented afterwards from memory, and code status gets missed | As grace.rn open Harish Malhotra › Vitals, chart a deteriorating set, then Call rapid response: log oxygen and calcium gluconate, try amoxicillin (blocked), escalate to code blue and watch the rhythm-check and adrenaline clocks. Close it and sign the drafted record. A code blue on Lalitha Varma (DNR/DNI, NEWS2 8, in Dr. Marsh's list) will not log CPR without a documented reversal |
 | Care plan | Plans live in notes; tasks get lost and drugs get planned against an allergy (Olir plans aspirin for an aspirin-allergic patient) | As elena.cardio open Harish Malhotra › Care plan › Add all: goals show live status, tasks close themselves (acknowledge the critical potassium and watch its task close). Add “Amoxicillin 500 mg PO TID”: blocked by his penicillin allergy until a doctor documents an override |
 | Patient twins list | Twins open one chart at a time; nobody sees who is deteriorating across the list | As elena.cardio open Patient twins: your 7 patients ranked critical, watch, stable, with why, NEWS2 and worst-lab sparklines, the last 24 h, the next forecast danger and organ dots. Filter, sort, open a twin or jump straight to Ask |
@@ -106,11 +107,11 @@ Two suites run in the browser against the local server (http://localhost:8765). 
 ```js
 // 1. Sweep: every account, every page, every button, every form and dialog
 await import('/tests/sweep.js?' + Date.now()).then((m) => m.run())
-// 2. Use cases: 71 real workflows across all roles, each with an expected outcome
+// 2. Use cases: 72 real workflows across all roles, each with an expected outcome
 await import('/tests/usecases.js?' + Date.now()).then((m) => m.run())
 ```
 
-Last run: sweep 224 pages, 900 actions, 161 forms, 48 dialogs, 0 issues (desktop); use cases 71/71 passed.
+Last run: sweep 226 pages, 932 actions, 161 forms, 48 dialogs, 0 issues (desktop); use cases 72/72 passed.
 
 ## Files
 

@@ -173,7 +173,7 @@
     return { title: `Welcome, ${esc(p.name.split(' ')[0])}`, sub: `MRN ${p.mrn} · ${SEED.org.name}`, body:
       (stay ? `<div class="banner info"><p>${esc(stay)} Your care team can see updates here as they happen in the hospital record.</p></div>` : '') +
       tiles([[nextTele ? nextTele.when : '—', 'Next visit'], [results, 'Results available'], [p.meds.filter((m) => /Active/.test(m.status)).length, 'Active medications'], [money(balance(p)), 'Estimated balance']]) +
-      `<div class="grid">${panel('Quick actions', `<div class="row"><a class="btn" href="#myresults">See results</a><a class="btn" href="#mymeds">Request a refill</a><a class="btn" href="#access">Who viewed my record</a></div>`)}
+      `<div class="grid">${panel('Quick actions', `<div class="row"><a class="btn" href="#mytwin">My health twin</a><a class="btn" href="#myresults">See results</a><a class="btn" href="#mymeds">Request a refill</a><a class="btn" href="#access">Who viewed my record</a></div>`)}
       ${panel('Your care team', `<p>${esc(U(p.attending).name)} · ${esc(U(p.attending).title)}</p>${p.consults.map((c) => `<p class="muted">${esc(DEPT[c])}</p>`).join('')}`)}</div>` };
   };
   VIEWS.visits = (u) => { const p = mine(u); pview(u, 'visits');

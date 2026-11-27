@@ -122,7 +122,7 @@
           ['Orders & results', [['orders', 'Orders (CPOE)'], ['results', 'Critical results'], ['gaps', 'Care gaps']]], ['Records', [['docintel', 'Document intelligence'], ['consents', 'Consents'], ['sdoh', 'Social needs']]], safety];
       }
       case 'nurse':
-        if (u.unit === 'PERIOP') return [['Peri-op', [['home', 'Peri-op board'], ['mywork', 'My work'], ['ot', 'OT suite'], ['daycare', 'Day care'], ['patients', 'Patients'], ['twins', 'Patient twins']]], ['Inpatient', [['assess', 'Risk assessments'], ['handover', 'Handover (ISBAR)'], ['beds', 'Bed board']]], safety];
+        if (u.unit === 'PERIOP') return [['Peri-op', [['home', 'Peri-op board'], ['mywork', 'My work'], ['ot', 'OT suite'], ['daycare', 'Day care'], ['patients', 'Patients'], ['twins', 'Patient twins'], ['results', 'Critical results']]], ['Inpatient', [['assess', 'Risk assessments'], ['handover', 'Handover (ISBAR)'], ['beds', 'Bed board']]], safety];
         return [['Unit', [['home', 'Unit board'], ['mywork', 'My work'], ['patients', 'Unit patients'], ['twins', 'Patient twins'], ['mar', 'eMAR'], ['results', 'Critical results']]],
           ['Inpatient', [['beds', 'Bed board'], ['icu', 'ICU board'], ['events', 'Rapid response'], ['assess', 'Risk assessments'], ['sdoh', 'Social needs'], ['handover', 'Handover (ISBAR)'], ['discharge', 'Discharge']]], ['Safety', [['infection', 'Infection control'], ['report', 'Report incident']]]];
       case 'pharmacist': return [['Pharmacy', [['home', 'Overview'], ['mywork', 'My work'], ['verify', 'Order verification'], ['inventory', 'Inventory'], ['patients', 'Medication profiles']]], ['Inpatient', [['medrec', 'Med reconciliation'], ['discharge', 'Discharge']]], safety];
@@ -133,7 +133,7 @@
       case 'billing': return [['Revenue cycle', [['home', 'Overview'], ['mywork', 'My work'], ['accounts', 'Accounts & claims'], ['estimates', 'Good faith estimates']]], ['Inpatient', [['discharge', 'Discharge']]]];
       case 'insurance': return [['Insurance desk', [['home', 'Overview'], ['mywork', 'My work'], ['insurance', 'Pre-auth & claims']]], ['Inpatient', [['discharge', 'Discharge']]]];
       case 'quality': return [['Quality', [['home', 'Overview'], ['mywork', 'My work'], ['measures', 'HEDIS measures'], ['gaps', 'Care gaps'], ['sdoh', 'Social needs (SDOH)'], ['alerts', 'Alert burden'], ['research', 'Research & cohorts']]], ['Safety', [['infection', 'Infection control'], ['incidents', 'Incidents'], ['report', 'Report incident']]]];
-      case 'patient': return [['My health', [['home', 'Home'], ['visits', 'Visits'], ['myresults', 'Results'], ['mymeds', 'Medications'], ['bills', 'Bills'], ['vault', 'My vault'], ['myconsents', 'Consents'], ['people', 'Family updates'], ['access', 'Who viewed my record']]]];
+      case 'patient': return [['My health', [['home', 'Home'], ['visits', 'Visits'], ['mytwin', 'My health twin'], ['myresults', 'Results'], ['mymeds', 'Medications'], ['bills', 'Bills'], ['vault', 'My vault'], ['myconsents', 'Consents'], ['people', 'Family updates'], ['access', 'Who viewed my record']]]];
       default: return [];
     }
   }

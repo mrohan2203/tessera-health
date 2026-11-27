@@ -1267,6 +1267,76 @@ Question: ${q}`;
   ACT['twins-ask'] = (d) => { UI.ptTwinView = UI.ptTwinView || {}; UI.ptTwinView[d.p] = 'ask'; location.hash = `patient-${d.p}-twin`; };
   T.CHANGE['twins-q'] = (v) => { UI.twinsQ = v; render(); };
 
+  /* ---------- Patient portal: "My health twin" ----------
+     The same twin, explained in plain language for the patient: how each part of the body is
+     doing, their numbers over time, the goals their care team set, and what each medicine is for.
+     Forecasts, risk percentages and what-if simulations stay with the care team: they are
+     unvalidated model output and easy to misread without a clinician. Patients see only their own
+     record, and opening the page is logged as individual access (Cures Act). */
+  const PLAIN_SYS = { neuro: 'Brain and nerves', heart: 'Heart and blood pressure', lungs: 'Lungs and breathing', gi: 'Liver and digestion', kidney: 'Kidneys and body salts', endo: 'Blood sugar and hormones', blood: 'Blood and infection', msk: 'Bones and joints' };
+  const PLAIN_LVL = [['ok', 'Looking good'], ['watch', 'Being watched'], ['alert', 'Needs attention']];
+  const PLAIN_PROB = [[/uncontrolled.*hypertens|hypertens.*uncontrolled/i, 'high blood pressure that is not yet under control'], [/hypertens|I10/i, 'high blood pressure'], [/type 2 diabet.*poorly|E11\.65/i, 'type 2 diabetes that needs better control'], [/type 2 diabet|E11/i, 'type 2 diabetes'], [/CKD|chronic kidney/i, 'kidneys that are not filtering as well as normal (chronic kidney disease)'], [/coronary|I25/i, 'narrowed heart arteries'], [/s\/p MI|myocardial infarction/i, 'a past heart attack'], [/atrial fib|I48/i, 'an irregular heartbeat (atrial fibrillation)'], [/heart failure/i, 'a heart that pumps less strongly than normal (heart failure)'], [/osteoarth.*knee|M17/i, 'wear-and-tear arthritis in the knee'], [/knee arthroplasty|knee replacement/i, 'your new knee joint (knee replacement surgery)'], [/COPD/i, 'long-term lung disease (COPD)'], [/asthma/i, 'asthma'], [/pneumon/i, 'a chest infection (pneumonia)'], [/neuropath/i, 'nerve damage in the feet (neuropathy)'], [/foot ulcer/i, 'a wound on the foot'], [/stroke/i, 'a stroke'], [/sepsis/i, 'a serious infection in the blood (sepsis)'], [/angina/i, 'chest pain from the heart (angina)'], [/anemi|anaemi/i, 'a low red blood cell count (anaemia)']];
+  const PLAIN_GROUP = (t) => /blood pressure/.test(t) ? 'bp' : /diabetes/.test(t) ? 'dm' : /arthritis|knee joint/.test(t) ? t : t;
+  const plainProblem = (x) => { const seen = new Set(); const hits = PLAIN_PROB.filter(([re]) => re.test(x)).map(([, t]) => t).filter((t) => { const g = PLAIN_GROUP(t); if (seen.has(g)) return false; seen.add(g); return true; }); return hits.length ? hits.slice(0, 2).join(' and ') : x.replace(/\s*\([^)]*\)\s*$/, '').toLowerCase(); };
+  const PLAIN_LAB = { potassium: ['Potassium', 'A salt your heart and muscles need. Too much can upset the heart rhythm.'], creatinine: ['Creatinine', 'A waste product your kidneys clear. A higher number means the kidneys are working less well.'], egfr: ['Kidney filtering (eGFR)', 'How well your kidneys filter your blood. Higher is better; over 60 is normal.'], inr: ['Clotting time (INR)', 'How long your blood takes to clot. On warfarin the usual target is 2 to 3.'], hba1c: ['Average blood sugar (HbA1c)', 'Your average blood sugar over about 3 months. Under 7% is the usual goal.'], glucose: ['Blood sugar', 'The sugar in your blood right now.'], 'troponin i': ['Troponin', 'A heart muscle protein. Higher means the heart is under strain.'], bnp: ['BNP', 'A hormone the heart releases when it is working too hard.'], sodium: ['Sodium', 'A salt that keeps fluid balanced in your body.'], hemoglobin: ['Haemoglobin', 'The part of red blood cells that carries oxygen.'], wbc: ['White blood cells', 'Infection-fighting cells. Higher can mean an infection.'], 'ldl cholesterol': ['LDL ("bad") cholesterol', 'Cholesterol that can build up in arteries. Lower is better.'], tsh: ['Thyroid test (TSH)', 'Shows how your thyroid gland is working.'], lactate: ['Lactate', 'Can rise when the body is short of oxygen or very unwell.'] };
+  const PLAIN_MED = [[/pril\b|sartan/i, 'lowers blood pressure and protects the kidneys'], [/dipine\b/i, 'lowers blood pressure'], [/olol\b|carvedilol/i, 'slows the heart and lowers blood pressure'], [/metformin/i, 'lowers blood sugar'], [/insulin/i, 'lowers blood sugar'], [/warfarin|apixaban|rivaroxaban|dabigatran|enoxaparin|heparin/i, 'thins the blood to prevent clots and stroke'], [/aspirin|clopidogrel|ticagrelor/i, 'helps prevent heart attacks and clots'], [/statin/i, 'lowers cholesterol'], [/furosemide|bumetanide|torsemide|thiazide/i, 'removes extra fluid (a water tablet)'], [/spironolactone/i, 'removes extra fluid and supports the heart'], [/meropenem|cef|cillin|vancomycin|azithro|cipro|levoflox|doxy/i, 'an antibiotic to treat infection'], [/prazole/i, 'reduces stomach acid'], [/levothyroxine/i, 'replaces thyroid hormone'], [/morphine|oxycodone|hydromorphone|fentanyl|tramadol/i, 'pain relief (an opioid)'], [/paracetamol|acetaminophen/i, 'pain and fever relief'], [/salbutamol|albuterol|tiotropium/i, 'opens the airways']];
+  const plainMed = (d) => (PLAIN_MED.find(([re]) => re.test(d)) || [null, 'ask your care team what this is for'])[1];
+  T.VIEWS.mytwin = (u) => {
+    const p = T.P(u.patientId); if (!p) return { title: 'My health twin', sub: '', body: '<p class="muted">No record is linked to this account.</p>' };
+    audit('portal-view', { patient: p, resource: 'health twin', purpose: 'Individual access' });
+    const sel = (UI.myTwinSys || null);
+    const st = Object.fromEntries(SYSTEMS.map((s) => [s.id, systemState(p, s)]));
+    const lvls = Object.fromEntries(SYSTEMS.map((s) => [s.id, st[s.id].level]));
+    const svg = body(p, sel, lvls).replace(/data-act="pt-twin-sys"/g, 'data-act="my-sys"');
+    const explain = (s) => {
+      const e = st[s.id]; const probs = p.problems.filter((x) => s.prob.test(x)).map(plainProblem);
+      const labs = p.labs.filter((l) => s.labs.test(l.test) && l.flag).map((l) => { const k = PLAIN_LAB[l.test.toLowerCase()]; return `${k ? k[0] : l.test} is ${/H/.test(l.flag) ? 'higher' : 'lower'} than normal (${l.value}${l.unit ? ' ' + l.unit : ''})`; });
+      const meds = activeMeds(p).filter((m) => fxOf(m.drug)[s.id]).map((m) => m.drug);
+      const parts = [];
+      if (probs.length) parts.push(`You have ${probs.join('; ')}.`);
+      if (labs.length) parts.push(`${labs.join('; ')}.`);
+      if (s.id === 'heart' && /\d/.test(p.vitals.bp)) { const sb = num(String(p.vitals.bp).split('/')[0]); if (sb >= 140) parts.push(`Your blood pressure today is ${p.vitals.bp}; the usual goal is under 140/90.`); }
+      if (s.id === 'lungs' && p.vitals.spo2 <= 95) parts.push(`Your oxygen level is ${p.vitals.spo2}%.`);
+      if (meds.length) parts.push(`Medicines that help here: ${meds.join(', ')}.`);
+      if (s.id === 'msk' && has(p, /knee arthroplasty|knee replacement/i)) parts.push('Your physiotherapists will help you get moving on your new knee.');
+      return parts.join(' ') || (e.level ? 'Your care team is keeping an eye on this.' : 'Nothing in your record suggests a problem here.');
+    };
+    const curSel = sel || SYSTEMS.slice().sort((a, b) => lvls[b.id] - lvls[a.id])[0].id;
+    const rows = SYSTEMS.map((s) => { const l = st[s.id].level; return `<button class="my-sys lv${l} ${curSel === s.id ? 'on' : ''}" data-act="my-sys" data-s="${s.id}"><i></i><span><b>${esc(PLAIN_SYS[s.id])}</b><small>${PLAIN_LVL[l][1]}</small></span></button>`; }).join('');
+    const selS = SYSTEMS.find((s) => s.id === sel) || SYSTEMS.slice().sort((a, b) => lvls[b.id] - lvls[a.id])[0];
+    const detail = `<div class="my-detail lv${lvls[selS.id]}"><h3>${esc(PLAIN_SYS[selS.id])} · ${PLAIN_LVL[lvls[selS.id]][1]}</h3><p>${esc(explain(selS))}</p></div>`;
+    const labsH = T.hist ? T.hist.labs(p) : [];
+    const numbers = labsH.map((s) => { const k = PLAIN_LAB[s.test.toLowerCase()] || [s.test, '']; const c = s.pts[s.pts.length - 1], a = s.pts.length > 1 ? s.pts[s.pts.length - 2] : null; const [lo, hi] = T.hist.refRange(s.ref);
+      const dir = a && c.v !== a.v ? `${c.v > a.v ? 'Up' : 'Down'} from ${a.raw} (${T.hist.dayLbl(a.at)})` : a ? 'No change since last time' : 'First result';
+      return `<li class="${c.flag ? 'flag' : ''}"><div><b>${esc(k[0])}</b><small>${esc(k[1])}</small></div><div class="my-num"><b>${esc(c.raw)}</b><span>${esc(s.unit || '')}</span><small>Normal: ${esc(s.ref || '—')}</small></div>${s.pts.length > 1 ? T.hist.spark(s.pts.map((x) => x.v), { w: 96, h: 26, lo, hi, cls: c.flag && c.flag.length > 1 ? 'crit' : c.flag ? 'warn' : '' }) : '<span></span>'}<small class="my-dir">${esc(dir)}</small></li>`; }).join('');
+    const vs = T.hist ? T.hist.vitals(p).slice(-12) : [];
+    const vit = vs.length ? [['Blood pressure', `${vs[vs.length - 1].sbp}/${vs[vs.length - 1].dbp}`, 'mmHg', 'Under 140/90', vs.map((x) => x.sbp), 140], ['Heart rate', vs[vs.length - 1].hr, 'beats a minute', '60 to 100', vs.map((x) => x.hr), 100], ['Oxygen level', vs[vs.length - 1].spo2 + '%', '', '95% or more', vs.map((x) => x.spo2), null]].map(([n, v, un, nm, ser]) => `<div class="my-vital"><span>${esc(n)}</span><b>${esc(String(v))}</b><small>${un ? esc(un) + ' · ' : ''}healthy: ${esc(nm)}</small>${T.hist.spark(ser, { w: 120, h: 28 })}</div>`).join('') : '';
+    const cp = T.careplan && T.careplan.summary(p);
+    const goals = cp && cp.goals.length ? cp.goals.map(({ g, st: gs, cur }) => `<li class="${gs}"><b>${esc(g.text)}</b><span>${gs === 'met' ? 'Done' : gs === 'improving' ? 'Getting there' : gs === 'nodata' ? 'Waiting for a result' : 'Not there yet'}${cur ? ` · now ${esc(cur.raw)}` : ''}</span></li>`).join('') : '';
+    const meds = p.meds.map((m) => `<li><b>${esc(m.drug)}</b> <span class="muted">${esc([m.dose, m.route, m.freq].filter((x) => x && !/held/i.test(x)).join(' '))}</span><span>${esc(plainMed(m.drug))}${/held|stopped/i.test(m.status + ' ' + m.dose) ? '. <b>On hold for now</b>; do not restart it on your own.' : /pending/i.test(m.status) ? '. Waiting for your doctor to confirm.' : '.'}</span></li>`).join('');
+    const qs = [];
+    SYSTEMS.filter((s) => lvls[s.id] === 2).forEach((s) => qs.push(`What is being done about my ${PLAIN_SYS[s.id].toLowerCase()}?`));
+    p.labs.filter((l) => l.flag && l.flag.length > 1).forEach((l) => qs.push(`My ${(PLAIN_LAB[l.test.toLowerCase()] || [l.test])[0].toLowerCase()} is ${/H/.test(l.flag) ? 'high' : 'low'}. What does that mean for me?`));
+    p.meds.filter((m) => /held/i.test(m.status + ' ' + m.dose)).forEach((m) => qs.push(`When can I restart ${m.drug}?`));
+    if (has(p, /hypertens/i)) qs.push('What should my blood pressure be at home, and how often should I check it?');
+    if (has(p, /diabet/i)) qs.push('How should I take my diabetes medicine around my hospital stay?');
+    if (has(p, /knee arthroplasty|knee replacement/i)) qs.push('When can I start physiotherapy, and how do I look after the wound?');
+    qs.push('What should make me call or come back?');
+    return { title: 'My health twin', sub: 'Your record, explained in plain language · only you and your care team can see it',
+      body: `<div class="banner info"><p>This page explains what is already in your record. It is not a diagnosis, and forecasts and risk scores are kept for your care team. If something here worries you, ask them.</p></div>
+        <div class="my-twin">
+          ${panel('How your body is doing', `<div class="my-map">${svg}<div class="my-rows">${rows}</div></div>${detail}<div class="legend" style="margin-top:10px"><span><i class="nw-low"></i>Looking good</span><span><i class="nw-mid"></i>Being watched</span><span><i class="nw-high"></i>Needs attention</span></div>`)}
+          <div class="my-col">
+            ${vit ? panel('Your vital signs', `<div class="my-vitals">${vit}</div>`) : ''}
+            ${goals ? panel('Goals your care team set', `<ul class="my-goals">${goals}</ul>`) : ''}
+            ${panel('Questions to ask your care team', `<ul class="my-qs">${qs.slice(0, 6).map((q) => `<li>${esc(q)}</li>`).join('')}</ul>`)}
+          </div>
+        </div>
+        ${numbers ? panel('Your test results over time', `<ul class="my-labs">${numbers}</ul>`) : ''}
+        ${panel('Your medicines and what they do', `<ul class="my-meds">${meds || '<li class="muted">No medicines on your list.</li>'}</ul>`)}` };
+  };
+  ACT['my-sys'] = (d) => { UI.myTwinSys = d.s; render(); };
+
   /* ---------- Tab ---------- */
   CHART.twin = function (u, p) {
     ['ptTwin', 'ptTwinView', 'ptTwinHour', 'ptTwinSys', 'ptTwinOpt', 'ptTwinAsk'].forEach((k) => { UI[k] = UI[k] || {}; });
