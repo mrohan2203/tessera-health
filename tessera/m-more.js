@@ -169,15 +169,55 @@
     if (z.kind === 'pharm') return [S().orders.filter((o) => o.type === 'Medication' && o.status === 'Signed' && !S().verified[o.id]).length, null, 'to verify'];
     return [null, null, ''];
   }
+  // One cell per bed (units) or per slot (ER, OR, day care, scanners). Bed IDs only: never names.
+  function zoneCells(z, n, cap) {
+    if (z.kind === 'unit') {
+      const st = S().bedStatus || {};
+      const pts = T.allPts();
+      return SEED.beds.filter((b) => b.unit === z.unit).map((b) => {
+        const p = pts.find((x) => x.unit === b.unit && x.bed === b.bed && x.status !== 'Discharged');
+        if (p) { const r = T.news2 ? T.news2(p).risk : 'Low'; const c = r === 'High' ? 'acute' : r === 'Medium' ? 'watch' : 'occ';
+          return `<i class="cell bed ${c}" title="${esc(b.bed)}: occupied${c !== 'occ' ? ', NEWS2 ' + r.toLowerCase() : ''}">${esc(b.bed.split('-').pop())}</i>`; }
+        const s2 = st[b.bed] || 'Available';
+        return `<i class="cell bed ${s2 === 'Available' ? 'free' : s2 === 'Cleaning' ? 'clean' : s2 === 'Reserved' ? 'resv' : 'block'}" title="${esc(b.bed)}: ${esc(s2.toLowerCase())}">${esc(b.bed.split('-').pop())}</i>`;
+      }).join('');
+    }
+    if (cap && n != null) return Array.from({ length: cap }, (_, i) => `<i class="cell ${i < n ? 'occ' : 'free'}"></i>`).join('');
+    return '';
+  }
+  function floorSummary(f) {
+    let n = 0, cap = 0, alerts = 0;
+    f.zones.forEach((z) => { const [a, c] = zoneLoad(z); if (a != null && c) { n += a; cap += c; } });
+    S().assets.forEach((a) => { const z = SEED.assetZone[a.id]; if (z && f.zones.some((x) => x.id === z) && (a.status !== 'Operational' || a.next < 0)) alerts++; });
+    return { n, cap, pct: cap ? n / cap : 0, alerts };
+  }
   VIEWS.twin = () => {
     const fl = SEED.floors.find((f) => f.id === (UI.floor || 'GF'));
-    const zones = fl.zones.map((z) => { const [n, cap, lab] = zoneLoad(z); const pct = cap ? n / cap : null; const heat = pct == null ? '' : pct >= 0.85 ? 'hot' : pct >= 0.6 ? 'warm' : 'cool';
-      const eq = S().assets.filter((a) => SEED.assetZone[a.id] === z.id).map((a) => `<i class="eq ${a.status !== 'Operational' ? 'down' : a.next < 0 ? 'due' : ''}" title="${esc(a.name)}: ${esc(a.status)}${a.next < 0 ? ', maintenance overdue' : ''}"></i>`).join('');
-      return `<div class="zone ${heat} k-${z.kind}" style="grid-column:${z.x}/span ${z.w};grid-row:${z.y}/span ${z.h}"><b>${esc(z.name)}</b>${n != null ? `<span class="zn">${n}${cap ? `<small>/${cap}</small>` : ''}</span><span class="kpi-note">${lab}</span>` : ''}${pct != null ? `<div class="minibar ${pct >= 0.85 ? 'over' : ''}"><i style="width:${Math.min(100, pct * 100)}%"></i></div>` : ''}${eq ? `<div class="eqrow">${eq}</div>` : ''}</div>`; }).join('');
+    const heatOf = (pct) => pct == null ? '' : pct >= 0.85 ? 'hot' : pct >= 0.6 ? 'warm' : 'cool';
+    const attention = [];
+    const zones = fl.zones.map((z) => { const [n, cap, lab] = zoneLoad(z); const pct = cap ? n / cap : null; const heat = heatOf(pct);
+      if (pct != null && pct >= 0.6) attention.push([pct >= 0.85 ? 'crit' : 'warn', `${z.name} is ${Math.round(pct * 100)}% full`, `${n} of ${cap} ${lab}`]);
+      if (z.kind === 'unit') { const st = S().bedStatus || {}; SEED.beds.filter((b) => b.unit === z.unit && st[b.bed] && st[b.bed] !== 'Available').forEach((b) => attention.push([st[b.bed] === 'Cleaning' ? 'info' : 'warn', `${b.bed} · ${st[b.bed]}`, z.name])); }
+      const assets = S().assets.filter((a) => SEED.assetZone[a.id] === z.id);
+      assets.filter((a) => a.status !== 'Operational' || a.next < 0).forEach((a) => attention.push([a.status !== 'Operational' ? 'crit' : 'warn', a.name, a.status !== 'Operational' ? a.status : `Maintenance overdue ${-a.next} d`]));
+      const eq = assets.map((a) => `<i class="eq ${a.status !== 'Operational' ? 'down' : a.next < 0 ? 'due' : ''}" title="${esc(a.name)}: ${esc(a.status)}${a.next < 0 ? ', maintenance overdue' : ''}"></i>`).join('');
+      const cells = zoneCells(z, n, cap);
+      return `<div class="zone ${heat} k-${z.kind}" style="grid-column:${z.x}/span ${z.w};grid-row:${z.y}/span ${z.h}"><div class="zhead"><b>${esc(z.name)}</b>${eq ? `<span class="eqrow">${eq}</span>` : ''}</div>${n != null ? `<span class="zn">${n}${cap ? `<small>/${cap}</small>` : ''}</span><span class="kpi-note">${lab}</span>` : `<span class="kpi-note">${z.kind === 'support' ? 'Support area' : ''}</span>`}${cells ? `<div class="cells">${cells}</div>` : ''}${pct != null ? `<div class="minibar ${pct >= 0.85 ? 'over' : ''}"><i style="width:${Math.min(100, pct * 100)}%"></i></div>` : ''}</div>`; }).join('');
+    const stack = SEED.floors.slice().reverse().map((f) => { const sm = floorSummary(f);
+      return `<button class="storey ${f.id === fl.id ? 'on' : ''} ${heatOf(sm.cap ? sm.pct : null)}" data-act="twin-floor" data-f="${f.id}"><span class="sid">${f.id}</span><span class="sname">${esc(f.name)}<small>${f.zones.map((z) => esc(z.name.split(' · ')[0])).join(' · ')}</small></span><span class="sload"><span class="minibar ${sm.pct >= 0.85 ? 'over' : ''}"><i style="width:${Math.min(100, sm.pct * 100)}%"></i></span><small>${sm.cap ? Math.round(sm.pct * 100) + '% full' : '—'}${sm.alerts ? ` · <b class="salert">${sm.alerts} alert${sm.alerts > 1 ? 's' : ''}</b>` : ''}</small></span></button>`; }).join('');
+    const order = { crit: 0, warn: 1, info: 2 };
+    attention.sort((a, b) => order[a[0]] - order[b[0]]);
+    const att = attention.length ? `<ul class="twin-att">${attention.map(([k, t, d]) => `<li class="${k}"><i></i><span><b>${esc(t)}</b><small>${esc(d)}</small></span></li>`).join('')}</ul>` : '<p class="muted">Nothing needs attention on this floor.</p>';
+    const all = SEED.floors.map(floorSummary); const tn = all.reduce((a, x) => a + x.n, 0), tc = all.reduce((a, x) => a + x.cap, 0), ta = all.reduce((a, x) => a + x.alerts, 0);
     audit('view-digital-twin', { detail: fl.id });
     return { title: 'Hospital map', sub: 'Digital twin of the building · live counts from the record · no patient names', body:
-      `<div class="chips">${SEED.floors.map((f) => `<button class="btn small ${f.id === fl.id ? 'primary' : ''}" data-act="twin-floor" data-f="${f.id}">${f.id} · ${esc(f.name)}</button>`).join('')}</div>` +
-      `<section class="hero"><div class="floorplan">${zones}</div><div class="legend"><span><i class="lg-cool"></i>Under 60% full</span><span><i class="lg-warm"></i>60–85%</span><span><i class="lg-hot"></i>Over 85%</span><span><i class="eq"></i>Equipment OK</span><span><i class="eq due"></i>Maintenance overdue</span><span><i class="eq down"></i>Down</span></div></section>` };
+      tiles([[SEED.floors.length, 'Floors'], [SEED.floors.reduce((a, f) => a + f.zones.length, 0), 'Zones'], [Math.round(tn / tc * 100) + '%', 'Building load'], [ta, 'Equipment alerts', ta ? 'warn' : '']]) +
+      `<div class="twin">
+        <section class="panel twin-stack"><header><h2>Building</h2></header><div class="body">${stack}</div></section>
+        <section class="panel twin-plan"><header><h2>${fl.id} · ${esc(fl.name)}</h2></header><div class="body"><div class="floorplan">${zones}</div>
+          <div class="legend"><span><i class="cell occ"></i>Occupied</span><span><i class="cell watch"></i>NEWS2 medium</span><span><i class="cell acute"></i>NEWS2 high</span><span><i class="cell free"></i>Free</span><span><i class="cell clean"></i>Cleaning</span><span><i class="cell resv"></i>Reserved</span><span><i class="eq due"></i>Maintenance due</span><span><i class="eq down"></i>Down</span></div></div></section>
+        <section class="panel twin-side"><header><h2>Needs attention</h2></header><div class="body">${att}</div></section>
+      </div>` };
   };
   ACT['twin-floor'] = (d) => { UI.floor = d.f; render(); };
 

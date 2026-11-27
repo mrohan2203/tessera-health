@@ -42,6 +42,7 @@ To install on a real iPhone or share through TestFlight, see [ios/README.md](ios
   patient tokens until a stated purpose is logged.
 - **Break-the-glass** for out-of-scope emergencies, with a reason and an after-the-fact review.
 - **Two-person rules** for role changes and blood issue. Nobody approves their own request.
+- **Digital twins** of the patient and of the hospital (floors, zones and beds). The patient twin has a **3D anatomy** of 2,234 separately addressable structures (bones, cartilage, ligaments and tendons, 428 muscles, 639 arteries, 404 veins, nerves, brain, heart valves, organs). The patient's record lights up the exact structures it affects, such as 52 coronary branches, liver segments, renal artery branches and retinas. It runs hour by hour to +72 h, with a simulated bedside monitor, lab forecasts with uncertainty bands, drug-level pharmacokinetics and what-if scenarios with doses. Simulations are audited and change nothing.
 - **Safety gates** such as allergy checks, controlled-drug confirmation, WHO surgical checklist and
   closed-loop critical results.
 
@@ -64,6 +65,10 @@ Two browser-run suites cover the app. Run them in the browser console at http://
 **Reset demo data**:
 
 ```js
-await import('/tests/usecases.js?' + Date.now()).then((m) => m.run())   // 63 end-to-end workflows
+await import('/tests/usecases.js?' + Date.now()).then((m) => m.run())   // 66 end-to-end workflows
 await import('/tests/sweep.js?' + Date.now()).then((m) => m.run())      // every page, action, form and dialog
 ```
+
+## Credits
+
+3D anatomy: BodyParts3D, © The Database Center for Life Science, licensed under [CC Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/). Meshes were simplified and repacked by [`tools/build_anatomy.py`](tools/build_anatomy.py) (all 2,234 structures kept, 6.68M → 1.6M triangles) and are drawn by a small WebGL viewer in [`tessera/m-anatomy.js`](tessera/m-anatomy.js).

@@ -342,8 +342,8 @@
     const acc = chartAccess(u, p);
     if (acc === 'none') { audit('chart-access', { patient: p, outcome: 'denied', detail: `role ${u.role} has no chart permission` }); return viewDenied(u, 'patient charts', true); }
     if (acc === 'btg-required') { audit('chart-access', { patient: p, outcome: 'blocked', detail: 'no care relationship' }); return viewBtg(u, p); }
-    const tabsFor = u.role === 'doctor' ? [['overview', 'Overview'], ['meds', 'Medications'], ['results', 'Results'], ['notes', 'Notes'], ['orders', 'Orders'], ['consents', 'Consents'], ['timeline', 'Timeline']]
-      : u.role === 'nurse' ? [['overview', 'Overview'], ['meds', 'Medications'], ['results', 'Results'], ['notes', 'Notes'], ['timeline', 'Timeline']] : [['meds', 'Medication profile']];
+    const tabsFor = u.role === 'doctor' ? [['overview', 'Overview'], ['meds', 'Medications'], ['results', 'Results'], ['notes', 'Notes'], ['orders', 'Orders'], ['consents', 'Consents'], ['timeline', 'Timeline'], ['twin', 'Twin']]
+      : u.role === 'nurse' ? [['overview', 'Overview'], ['meds', 'Medications'], ['results', 'Results'], ['notes', 'Notes'], ['timeline', 'Timeline'], ['twin', 'Twin']] : [['meds', 'Medication profile']];
     let tab = args[1] || tabsFor[0][0];
     if (!tabsFor.some((t) => t[0] === tab)) tab = tabsFor[0][0];
     const g = acc === 'btg' ? btgActive(u, p) : null;

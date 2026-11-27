@@ -15,3 +15,6 @@ ios/TesseraHealth/web/
 
 # Private notes kept out of the public repo
 docs/
+
+# LinkedIn post material (not part of the app)
+linkedin/
