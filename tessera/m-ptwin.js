@@ -979,8 +979,8 @@
      the 72-hour forecast and anatomy findings). Free-text notes and identifiers are never included.
      On the published link Claude answers; elsewhere a rule engine answers from the same facts. Every
      claim cites its fact, uncited answers are flagged, and every question is audited. */
-  const ASK_LINK = { lab: 'results', vitals: 'vitals', med: 'meds', problem: 'overview', allergy: 'overview', infection: 'overview', order: 'orders', result: 'results' };
-  const ASK_ICON = { lab: '⚗', vitals: '♥', med: '℞', problem: '◆', allergy: '⚠', infection: '✚', order: '☰', result: '!', score: '∑', risk: '▲', forecast: '⟶', anatomy: '◎', twin: '◇' };
+  const ASK_LINK = { plan: 'careplan', lab: 'results', vitals: 'vitals', med: 'meds', problem: 'overview', allergy: 'overview', infection: 'overview', order: 'orders', result: 'results' };
+  const ASK_ICON = { plan: '☑', lab: '⚗', vitals: '♥', med: '℞', problem: '◆', allergy: '⚠', infection: '✚', order: '☰', result: '!', score: '∑', risk: '▲', forecast: '⟶', anatomy: '◎', twin: '◇' };
   const SYS_WORDS = { neuro: /brain|neuro|nerve|confus|stroke|seiz/, heart: /heart|cardi|coronar|rhythm|atri|arrhythm|\baf\b|blood pressure|\bbp\b|aort/, lungs: /lung|breath|resp|oxygen|spo2|airway/, gi: /liver|gut|stomach|bowel|\bgi\b|hepat/, kidney: /kidney|renal|ckd|potassium|creatinine|egfr|urin|bladder/, endo: /diabet|glucose|sugar|a1c|pancrea|endocr|thyroid/, blood: /blood|bleed|inr|clot|warfarin|anticoag|infect|sepsis/, msk: /bone|joint|spine|knee|hip/ };
   function askFacts(ctx) {
     const { p, lv, on, opt, rs, sim, base, ev, evB } = ctx;
@@ -1018,6 +1018,12 @@
     if (lv.some((l) => on.has(l.id) !== !!l.pre)) ev.slice(0, 4).forEach((e) => add('forecast', `Forecast event with the current simulated levers: ${e.text} at ${hLabel(e.h)}`, { cls: e.cls, sim: true }));
     interactions(p, medRows(p, ctx)).forEach(([c, a, b]) => add('med', `Caution: ${a}. ${b}`, { caution: c }));
     ANAT_RULES.forEach((r) => { if (r.when(p)) add('anatomy', `Anatomy finding: ${r.label} (${r.why(p, { h: 0, sim: base, k: base.k ? base.k[0] : null, lv: base.levels[0] }) || ''})`); });
+    const cp = T.careplan && T.careplan.summary(p);
+    if (cp) {
+      cp.goals.forEach(({ g, label, cur }) => add('plan', `Care plan goal (${g.sys}): ${g.text} — ${label}${cur ? `, now ${cur.raw}` : ''}`, { sys: [g.sys] }));
+      cp.tasks.filter((x) => x.state !== 'done').forEach(({ t, state, due }) => add('plan', `Care plan task for ${t.owner}: ${t.text} — ${state === 'overdue' ? 'OVERDUE' : state === 'ontrack' ? 'on track' : 'open'}, due ${T.careplan.rel(due - Date.now())}`, { overdue: state === 'overdue' }));
+      cp.meds.forEach((m) => add('plan', `Planned drug: ${m.drug} — safety check ${m.check.level}${m.check.reasons.length ? ': ' + m.check.reasons.join(' ') : ''}${m.ordered ? ' (sent to orders)' : ''}`));
+    }
     F.forEach((f) => { f.terms = f.text.toLowerCase(); });
     return F;
   }
@@ -1075,6 +1081,11 @@
       const fc = of('forecast').filter((f) => !f.sim); fc.slice(0, 4).forEach((f) => say(f.text + '.', f));
       if (!fc.length) say('The record has no labs the twin can project.');
       follow.add("What's the biggest risk right now?");
+    } else if (/care plan|plan\b|goal|task|overdue|to.?do/.test(t)) {
+      const ps = of('plan'); if (!ps.length) say('There is no care plan yet. Open the Care plan tab to accept the suggested goals and tasks.');
+      ps.filter((f) => f.overdue).forEach((f) => say(f.text.replace('Care plan task for ', 'Overdue for ') + '.', f));
+      ps.filter((f) => /goal/.test(f.text)).slice(0, 4).forEach((f) => say(f.text.replace('Care plan goal ', 'Goal ') + '.', f));
+      ps.filter((f) => /Planned drug/.test(f.text) && /block/.test(f.text)).forEach((f) => say(f.text + '.', f));
     } else if (/vital|news|heart rate|pulse|\bbp\b|pressure|oxygen|spo2|sat|temp|fever|breath/.test(t)) {
       const vl = F.find((f) => f.latest), vd = F.find((f) => f.dayAgo); say(vl.text + '.', vl); if (vd) say('For comparison: ' + vd.text.replace(/^Vitals about 24 h earlier /, '') + '.', vd);
     } else if (/abnormal|out of range|critical|high|low|labs?\b|results?/.test(t)) {
@@ -1142,7 +1153,7 @@ Question: ${q}`;
     setTimeout(() => { const el = document.querySelector('.ask-thread .ask-item:last-child'); el && el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 30);
   }
   function askCtx(p) {
-    const lv = levers(p), on = UI.ptTwin[p.id] || baseSet(lv), opt = UI.ptTwinOpt[p.id] || {};
+    const lv = levers(p), on = (UI.ptTwin || {})[p.id] || baseSet(lv), opt = (UI.ptTwinOpt || {})[p.id] || {};
     const sim = project(p, lv, on, opt), base = project(p, lv, baseSet(lv), {});
     return { p, lv, on, opt, rs: risks(p), sim, base, ev: events(p, sim), evB: events(p, base) };
   }
@@ -1211,9 +1222,10 @@ Question: ${q}`;
     crit.filter((r) => r.state === 'New').forEach((r) => changes.unshift(['crit', `New critical: ${r.test} ${r.value}`]));
     const worst = labsH.filter((s) => s.pts[s.pts.length - 1].flag).sort((x, y) => y.pts[y.pts.length - 1].flag.length - x.pts[x.pts.length - 1].flag.length)[0] || labsH[0] || null;
     const worsening = changes.filter((c) => c[2]);
-    let score = n.sc * 6 + (n.sc >= 7 ? 25 : 0) + worsening.length * 4 + alerts.length * 10 + watches.length * 3 + critEv.length * 6 + crit.length * 12 + (soon ? 10 : 0) + ((S().isolation || []).some((i) => i.patient === p.id) ? 2 : 0);
+    const cpS = T.careplan && T.careplan.summary(p); const overdueTasks = cpS ? cpS.overdue.length : 0;
+    let score = n.sc * 6 + (n.sc >= 7 ? 25 : 0) + worsening.length * 4 + overdueTasks * 3 + alerts.length * 10 + watches.length * 3 + critEv.length * 6 + crit.length * 12 + (soon ? 10 : 0) + ((S().isolation || []).some((i) => i.patient === p.id) ? 2 : 0);
     const cat = n.sc >= 7 || crit.some((r) => r.state === 'New') || soon || alerts.length >= 2 ? 'critical' : n.sc >= 5 || alerts.length || critEv.length || crit.length || worsening.length ? 'watch' : 'stable';
-    const why = [n.sc >= 5 && `NEWS2 ${n.sc}`, crit.length && `${crit.length} open critical result${crit.length > 1 ? 's' : ''}`, soon && `${soon.text.split(':')[0]} by ${hLabel(soon.h)}`, alerts.length && `${alerts.map(([s]) => s.name.split(' ')[0]).join(', ')} on alert`, n.sc < 5 && worsening.length && `${worsening.map((c) => c[1].split(' ')[0] + (c[1].split(' ')[1] && !/\d/.test(c[1].split(' ')[1]) ? ' ' + c[1].split(' ')[1] : '')).join(', ')} worsening`].filter(Boolean);
+    const why = [n.sc >= 5 && `NEWS2 ${n.sc}`, crit.length && `${crit.length} open critical result${crit.length > 1 ? 's' : ''}`, soon && `${soon.text.split(':')[0]} by ${hLabel(soon.h)}`, alerts.length && `${alerts.map(([s]) => s.name.split(' ')[0]).join(', ')} on alert`, overdueTasks && `${overdueTasks} care-plan task${overdueTasks > 1 ? 's' : ''} overdue`, n.sc < 5 && worsening.length && `${worsening.map((c) => c[1].split(' ')[0] + (c[1].split(' ')[1] && !/\d/.test(c[1].split(' ')[1]) ? ' ' + c[1].split(' ')[1] : '')).join(', ')} worsening`].filter(Boolean);
     return { p, n, sys, alerts, crit, evs, first: critEv[0] || evs.find((e) => e.cls === 'warn') || null, vs, last, dayAgo, changes: changes.slice(0, 3), worst, score, cat, why };
   }
   T.VIEWS.twins = (u) => {
