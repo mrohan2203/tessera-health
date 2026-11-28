@@ -12,6 +12,8 @@ import cookie from '@fastify/cookie';
 import { appPool, withAudit, auditOnly, type Actor } from './db.ts';
 import { kms, decText, decJson, openWithKek, blindIndex, verifyPassword, verifyTotp, newSessionToken, sessionHash } from './crypto.ts';
 import { env } from './env.ts';
+import { COLLS, ARRAY_COLLS, readable, check, RuleError, type Coll } from './records.ts';
+import { encField } from './crypto.ts';
 
 const COOKIE = 'tessera_sid';
 const PURPOSE: Record<string, string> = { doctor: 'Treatment', nurse: 'Treatment', pharmacist: 'Treatment', patient: 'Individual access', admin: 'Operations', quality: 'Operations' };
@@ -20,7 +22,7 @@ const BTG_ROLES = new Set(['doctor', 'nurse']);
 const AUDIT_ROLES = new Set(['admin', 'quality']);
 
 export function build() {
-  const app = Fastify({ logger: false, trustProxy: true, bodyLimit: 64 * 1024 });
+  const app = Fastify({ logger: false, trustProxy: true, bodyLimit: 512 * 1024 });
   app.register(cookie);
 
   // Security headers, CORS for the app origin only, CSRF header on writes
@@ -114,6 +116,23 @@ export function build() {
     return r.rows[0];
   };
 
+  /* Clinical records for the given patients, decrypted and filtered for the caller's role. */
+  async function loadRecords(c: any, role: string, pids: string[]) {
+    const out: any = { records: {}, versions: {} };
+    COLLS.forEach((k) => { out.records[k] = ARRAY_COLLS.has(k) ? [] : {}; });
+    if (!pids.length) return out;
+    const { rows } = await c.query('select r.coll, r.key, r.patient_id, r.version, r.body_enc, p.dek_wrapped from app.records r join app.patients p on p.id = r.patient_id where r.patient_id = any($1) order by r.created_at, r.key', [pids]);
+    const deks = new Map<string, Buffer>();
+    for (const r of rows) {
+      if (!deks.has(r.patient_id)) deks.set(r.patient_id, kms.unwrap(r.dek_wrapped));
+      const body = decJson(deks.get(r.patient_id)!, r.body_enc);
+      if (!readable(role, r.coll, body)) continue;
+      if (ARRAY_COLLS.has(r.coll)) out.records[r.coll].push(body); else out.records[r.coll][r.key] = body;
+      out.versions[`${r.coll}|${r.key}`] = r.version;
+    }
+    return out;
+  }
+
   app.get('/api/patients', async (req: any, reply) => {
     const s = await requireUser(req, reply); if (!s) return;
     if (!CHART_ROLES.has(s.role) && s.role !== 'patient') { await auditOnly(actor(s), req.ip, { action: 'list-patients', outcome: 'denied', detail: `role ${s.role}` }); return reply.code(403).send({ error: 'Your role has no patient list.' }); }
@@ -138,14 +157,17 @@ export function build() {
         const exists = (await c.query('select app.patient_exists($1) as e', [pid])).rows[0].e;
         audit({ action: 'chart-denied', resource: pid, outcome: 'denied', detail: exists ? 'no care relationship' : 'no such patient' });
         reply.code(exists ? 403 : 404);
-        return exists && BTG_ROLES.has(s.role) ? { error: 'Not in your care. Emergency access (break the glass) is available and will be reviewed.', btg: true } : { error: 'Not available.' };
+        // The break-the-glass screen gets the same minimal header as search: no name, MRN or date of birth
+        const header = exists && BTG_ROLES.has(s.role) ? (await c.query('select * from app.patient_header($1)', [pid])).rows[0] : null;
+        return header ? { error: 'Not in your care. Emergency access (break the glass) is available and will be reviewed.', btg: true, header } : { error: 'Not available.' };
       }
       const a = s.role === 'patient' ? { rel: 'self' } : await accessOf(c, s.id, pid);
       const via = a.rel ? 'care' : a.btg ? 'btg' : s.role === 'pharmacist' ? 'pharmacy' : 'care';
       let p = decode(rows[0], true);
       if (s.role === 'pharmacist') p = { id: p.id, token: p.token, name: p.name, mrn: p.mrn, age: p.age, sex: p.sex, unit: p.unit, bed: p.bed, weightKg: p.weightKg, allergies: p.allergies, allergiesUnknown: p.allergiesUnknown, meds: p.meds, labs: (p.labs || []).filter((l: any) => /creatinine|egfr|potassium|inr/i.test(l.test)) };
       audit({ action: 'view-chart', resource: s.role === 'pharmacist' ? 'medication profile' : 'chart', patient_token: rows[0].token, purpose: via === 'btg' ? 'Emergency (break-the-glass)' : PURPOSE[s.role], detail: `access: ${via}${a.btg ? `, grant until ${new Date(a.btg).toISOString()}` : ''}` });
-      return { patient: p, access: via };
+      const recs = await loadRecords(c, s.role, [pid]);
+      return { patient: p, access: via, ...recs };
     });
   });
 
@@ -221,10 +243,11 @@ export function build() {
         const k = rel.find((x: any) => x.patient_id === r.id);
         p._access = s.role === 'patient' ? 'self' : k ? 'care' : btg.some((g: any) => g.patient_id === r.id) ? 'btg' : s.role === 'pharmacist' ? 'pharmacy' : 'care';
         p._rel = k ? k.kinds : '';
-        audit({ action: 'census', resource: s.role === 'pharmacist' ? 'medication profile' : 'worklist record', patient_token: r.token, purpose: p._access === 'btg' ? 'Emergency (break-the-glass)' : PURPOSE[s.role], detail: `access: ${p._access}` });
+        audit({ action: 'census', resource: s.role === 'pharmacist' ? 'medication profile and medication records' : 'worklist record and clinical records', patient_token: r.token, purpose: p._access === 'btg' ? 'Emergency (break-the-glass)' : PURPOSE[s.role], detail: `access: ${p._access}` });
         return p;
       });
-      return { user: publicUser(s), patients, btg, config: cfg };
+      const recs = await loadRecords(c, s.role, patients.map((p: any) => p.id));
+      return { user: publicUser(s), patients, btg, config: cfg, ...recs };
     });
   });
 
@@ -240,6 +263,55 @@ export function build() {
       return { matches: rows };
     });
   });
+
+  /* ---------- clinical record writes (Phase 3) ----------
+     The app sends what changed; each item is authorised, checked against the clinical rules, encrypted,
+     version-checked and audited in its own transaction. A refused item comes back with the stored
+     version so the app can put it back. */
+  const WRITE_ROLES = new Set(['doctor', 'nurse', 'pharmacist']);
+  app.post('/api/records', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    const writes = (req.body || {}).writes;
+    if (!Array.isArray(writes) || writes.length > 50) return reply.code(400).send({ error: 'Send 1 to 50 writes.' });
+    const results = [];
+    for (const w of writes) results.push(await writeOne(s, req.ip, w));
+    return { results };
+  });
+  async function writeOne(s: any, ip: string, w: any) {
+    const coll = w && w.coll as Coll, key = String((w && w.key) || ''), pid = String((w && w.patient) || '');
+    const base = { coll, key };
+    if (!COLLS.includes(coll) || !key || key.length > 120 || !pid) return { ...base, ok: false, status: 400, error: 'Bad write.' };
+    if (!WRITE_ROLES.has(s.role)) { await auditOnly(actor(s), ip, { action: `write-${coll}`, resource: key, outcome: 'denied', detail: `role ${s.role}` }); return { ...base, ok: false, status: 403, error: 'Your role cannot change clinical records.' }; }
+    if ((['vitalsLog', 'carePlans', 'medrec', 'patientPatches'] as string[]).includes(coll) && key !== pid) return { ...base, ok: false, status: 400, error: 'Key must be the patient.' };
+    if (coll === 'mar' && key.split('|')[0] !== pid) return { ...base, ok: false, status: 400, error: 'MAR slot belongs to another patient.' };
+    return withAudit(actor(s), ip, async (c, audit) => {
+      const pr = (await c.query('select * from app.patients where id = $1', [pid])).rows[0];
+      if (!pr) { audit({ action: `write-${coll}`, resource: key, outcome: 'denied', detail: 'no care relationship' }); return { ...base, ok: false, status: 403, error: 'Not in your care.' }; }
+      if (s.role === 'pharmacist' && !['orders', 'verified', 'medrec'].includes(coll)) { audit({ action: `write-${coll}`, resource: key, patient_token: pr.token, outcome: 'denied', detail: 'pharmacist scope' }); return { ...base, ok: false, status: 403, error: 'Your role cannot change this part of the record.' }; }
+      const dek = kms.unwrap(pr.dek_wrapped);
+      const cur = (await c.query('select patient_id, version, body_enc from app.records where coll = $1 and key = $2', [coll, key])).rows[0];
+      const old = cur ? decJson(dek, cur.body_enc) : null;
+      const current = cur ? { version: cur.version, body: old } : null;
+      if (cur && cur.patient_id !== pid) return { ...base, ok: false, status: 409, error: 'Record belongs to another patient.' };
+      if ((cur ? cur.version : 0) !== Number(w.version || 0)) { audit({ action: `write-${coll}`, resource: key, patient_token: pr.token, outcome: 'denied', detail: `version conflict (have ${w.version || 0}, stored ${cur ? cur.version : 0})` }); return { ...base, ok: false, status: 409, error: 'Someone else changed this record. The latest version is shown.', current }; }
+      if (coll === 'verified') { const o = (await c.query("select patient_id from app.records where coll = 'orders' and key = $1", [key])).rows[0]; if (!o || o.patient_id !== pid) return { ...base, ok: false, status: 400, error: 'No such order for this patient.' }; }
+      const patient = { ...decJson(dek, pr.clinical_enc) };
+      const planRow = coll === 'orders' ? (await c.query("select body_enc from app.records where coll = 'carePlans' and key = $1", [pid])).rows[0] : null;
+      const uname = (await c.query('select name from app.users where id = $1', [s.id])).rows[0].name;
+      try { check(coll, w.body, { role: s.role, userId: s.id, userName: uname, patient, old, plan: planRow ? decJson(dek, planRow.body_enc) : null }); }
+      catch (e) {
+        if (!(e instanceof RuleError)) throw e;
+        audit({ action: `write-${coll}`, resource: key, patient_token: pr.token, outcome: 'denied', detail: e.message.slice(0, 200) });
+        return { ...base, ok: false, status: e.status, error: e.message, current };
+      }
+      const enc = encField(dek, w.body);
+      if (cur) await c.query('update app.records set version = version + 1, body_enc = $3, updated_by = $4, updated_at = now() where coll = $1 and key = $2', [coll, key, enc, s.id]);
+      else await c.query('insert into app.records (coll, key, patient_id, body_enc, created_by, updated_by) values ($1,$2,$3,$4,$5,$5)', [coll, key, pid, enc, s.id]);
+      const version = (cur ? cur.version : 0) + 1;
+      audit({ action: `write-${coll}`, resource: key, patient_token: pr.token, purpose: PURPOSE[s.role], detail: cur ? `updated to v${version}` : 'created' });
+      return { ...base, ok: true, version };
+    });
+  }
 
   app.get('/api/health', async () => ({ ok: true }));
   app.setErrorHandler((err, _req, reply) => { reply.code(err.statusCode && err.statusCode < 500 ? err.statusCode : 500).send({ error: err.statusCode && err.statusCode < 500 ? err.message : 'Something went wrong. Nothing was changed.' }); });

@@ -15,7 +15,7 @@
     "seed": "node --experimental-strip-types --no-warnings src/seed.ts",
     "dev": "node --experimental-strip-types --no-warnings src/server.ts",
     "totp": "node --experimental-strip-types --no-warnings src/devtotp.ts",
-    "test": "node --experimental-strip-types --no-warnings --test test/*.test.ts"
+    "test": "node --experimental-strip-types --no-warnings --test --test-concurrency=1 test/*.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.5",

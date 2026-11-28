@@ -81,6 +81,8 @@ The security rules are enforced in the browser today, which is fine for a pitch 
 
 Phase 2 is done locally: a real API and database in [`backend/`](backend/) with sign-in by password and authenticator code, encrypted identifiers and records, an append-only hash-chained audit log, care relationships checked by the API and again by row-level security, and break-the-glass. The app's live mode (`?mode=live`) uses it for sign-in, patient lists, charts and the audit log. The published link stays in demo mode.
 
+Phase 3 is done locally too. The clinical record (orders, results, notes, lab orders, eMAR, pharmacist verification, vitals, care plans, rapid-response records and medication reconciliation) is stored encrypted on the server, with every version kept. The server enforces the clinical rules: allergy blocks need a doctor's override, signed notes and charted doses can't change, vitals are range-checked, and each role writes only what it may.
+
 ## Credits
 
 3D anatomy: BodyParts3D, © The Database Center for Life Science, licensed under [CC Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/). Meshes were simplified and repacked by [`tools/build_anatomy.py`](tools/build_anatomy.py) (all 2,234 structures kept, 6.68M → 1.6M triangles) and are drawn by a small WebGL viewer in [`tessera/m-anatomy.js`](tessera/m-anatomy.js).

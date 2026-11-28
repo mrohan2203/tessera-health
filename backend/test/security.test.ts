@@ -188,8 +188,9 @@ test('the audit log is append-only, even for its owner', async () => {
     await assert.rejects(c.query('delete from audit.log'), /permission denied/);
     await assert.rejects(c.query('truncate audit.log'), /permission denied/);
   } finally { c.release(); }
-  await assert.rejects(owner.query("update audit.log set detail = 'x' where seq = 1"), /append-only/);
-  await assert.rejects(owner.query('delete from audit.log where seq = 1'), /append-only/);
+  const first = (await owner.query('select min(seq) as s from audit.log')).rows[0].s;
+  await assert.rejects(owner.query("update audit.log set detail = 'x' where seq = $1", [first]), /append-only/);
+  await assert.rejects(owner.query('delete from audit.log where seq = $1', [first]), /append-only/);
   await assert.rejects(owner.query('truncate audit.log'), /append-only/);
 });
 

@@ -13,9 +13,63 @@ The prototype enforces its security rules in the browser. This folder holds the 
 | 0 · Decisions | Cloud and BAA, identity provider, region, threat model, retention | Partly decided (see below) |
 | 1 · Data layer | One store interface for every persisted read and write, demo and live adapters, access map | **Done** |
 | 2 · Security core | Auth + MFA, users and roles, care relationships, patients with encrypted identifiers, audit pipeline, break-the-glass | **Done** (local; cloud deployment pending) |
-| 3 · Clinical modules | Observations (vitals and labs), orders and checks, results loop, notes, MAR, care plan, rapid response | Next |
-| 4 · The rest | Front office, billing, insurance, OT, blood bank, portal, FHIR API, notifications | |
+| 3 · Clinical modules | Observations (vitals and labs), orders and checks, results loop, notes, MAR, care plan, rapid response | **Done** (local) |
+| 4 · The rest | Front office, billing, insurance, OT, blood bank, portal, FHIR API, notifications | Next |
 | 5 · Hardening | HIPAA risk assessment, pen test, monitoring, backup and DR drills, load test | |
+
+## Phase 3: clinical records
+
+The clinical half of the chart now lives on the server: orders, results, notes, lab orders, the eMAR, pharmacist verification, the vitals flowsheet, care plans, rapid-response and code-blue records, medication reconciliation and chart updates (current vitals, problems, allergies, weight, code status).
+
+### How it works
+
+- **Storage:** each item is one row in `app.records`, encrypted under its patient's data key. Every version is kept in `app.record_versions`, also encrypted. The API role has no delete right: nothing in the clinical record is ever removed.
+- **Reads:** records come with the census and with each chart, filtered by role. A pharmacist gets medication orders, verification, the eMAR and reconciliation. A patient gets signed notes, released labs and active medicines. Row-level security applies to records exactly as it does to patients.
+- **Writes:** in live mode the app sends only the items that changed, each with the version it was based on (`POST /api/records`). Each item is authorised, checked, encrypted and audited in its own transaction.
+- **Refusals and conflicts:** a refused write is explained on screen, and that patient's records are reloaded from the server, so nobody keeps looking at something the server rejected. A stale version is refused as a conflict instead of overwriting someone else's change.
+- **Sign-out:** waits for pending saves, and the next sign-in waits for the sign-out. Both share one cookie, so a slow save can't land under the wrong person.
+
+### Rules the server enforces ([`src/records.ts`](src/records.ts))
+
+- **Orders:**
+  - Only doctors place or sign them.
+  - A penicillin-class or sulfonamide drug for a patient with that allergy can't be signed without a doctor's override reason, recorded on the order or on the care-plan medicine it came from.
+  - A signed order can't be edited.
+  - Pharmacists can only verify or reject; nurses can't change orders.
+- **Notes:** a draft belongs to its author. A signed note never changes; addenda can only be added.
+- **Results:** the value can't change and the trail is append-only. Results themselves come from the lab and imaging systems.
+- **eMAR:** nurses only; an entry can't be changed once charted, and a held or refused dose needs a reason.
+- **Verification:** pharmacists only, once per order.
+- **Vitals:** append-only and range-checked, so a heart rate of 400 is refused.
+- **Care plans:**
+  - A doctor starts the plan; nurses can update tasks but not goals or medicines.
+  - A blocked medicine needs a doctor's override before it can be ordered.
+- **Rapid-response records:**
+  - The log is append-only, and a closed event takes no new entries.
+  - A drug against a recorded allergy needs an override reason.
+  - Vitals in the log are range-checked.
+- **Chart fields:** current vitals, weight and height can be changed by doctors and nurses; problems and medicines by doctors only; allergies by doctors and nurses; code status by doctors only. Bed moves, status and registration details are refused until Phase 4.
+- **Patients:** read-only in this API.
+
+### Fixed along the way
+
+The audit chain could break under concurrent writes. Row numbers were assigned before the chain lock, so two requests could commit in one order and link in the other. Numbers are now assigned after the lock (`migrations/006_audit_order.sql`). A new test runs 50 concurrent audited transactions and checks the chain and the numbering.
+
+### Verified
+
+- **`npm test`: 32 tests.**
+  - Every rule above, both allowed and refused.
+  - Version conflicts.
+  - Writes outside the care relationship refused and audited; billing and patients can't write.
+  - Records stored only as ciphertext, every version kept, no delete right.
+  - Audit chain under concurrency.
+- **`python3 e2e/run_live_usecases.py`:** the 73 app workflows run in live mode against the API. 49 pass. The 24 that can't pass yet are listed in the script with the reason for each: demo sign-in screens, the demo storage check, and Phase 4 modules whose state is not on the API yet. Anything else failing is a regression.
+- **`python3 e2e/live_test.py`:**
+  - Sign-in, census, charts, search, break-the-glass and the audit log.
+  - A note survives a reload and reaches the nurse.
+  - An edit to a signed note is refused and rolled back on screen.
+  - Every menu page for all 20 accounts.
+- **Demo mode unchanged:** 73 workflows pass, and the sweep shows 226 pages, 932 actions, 161 forms, 48 dialogs and 0 issues.
 
 ## Phase 2: the security core
 
@@ -102,7 +156,7 @@ Then serve `tessera/` on port 8765 and open `http://localhost:8765/?mode=live&ap
   - Authenticator codes can be reused within their 30-second window.
   - Lockout is per account; there is no per-IP rate limit yet.
   - Copying the audit log to write-once storage (S3 Object Lock) is still to do, which matters because someone with DDL rights could rebuild the whole chain.
-- **Other modules:** in live mode they still show synthetic demo data, limited to the patients the server sent. Modules that need records a role isn't sent (front-desk bed board and social needs, insurance cases) show "not connected yet" until Phase 3.
+- **Other modules:** in live mode the non-clinical modules (front office, ER registration, lab and radiology worklists, blood bank, billing, insurance, admin tools, portal requests) still show synthetic demo data, limited to the patients the server sent. Their changes stay in the open tab, and screens that need records a role isn't sent show "not connected yet". This is Phase 4.
 - **iPhone:** the app still runs the demo offline. Live mode will be online-only, with `TESSERA_CONFIG.apiBase` set at build time.
 
 ## Phase 1: what changed

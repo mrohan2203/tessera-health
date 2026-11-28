@@ -24,7 +24,7 @@
   const T = window.Tessera = { SEED, VIEWS: null, ACT: null, FORMS: null, CHART: null, HOME: {}, inits: [], after: [] };
   function withModules(s) { T.inits.forEach((fn) => fn(s)); return s; }
   let S = null; // created in boot(), after modules have registered their state
-  const save = () => store.saveState(S);
+  const save = () => (LIVE ? liveSync() : store.saveState(S)); // live: send changed clinical records to the API
 
   let session = null;
   session = store.loadSession();
@@ -37,7 +37,7 @@
   const P = (id) => { if (store.tracing) store.note('patients', 'r'); return allPts().find((p) => p.id === id); };
   const U = (id) => S.users.find((u) => u.id === id);
   const me = () => (session ? U(session.userId) : null);
-  const nid = (prefix) => prefix + '-' + (++S.seq);
+  const nid = (prefix) => LIVE ? prefix + '-' + (Date.now().toString(36) + Math.random().toString(36).slice(2, 5)).toUpperCase() : prefix + '-' + (++S.seq); // live: unique across users
   function fnv(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h.toString(16).padStart(8, '0'); }
   const tok = (p) => !p ? '—' : p.token || 'PT-' + fnv('bayview|' + p.mrn).slice(0, 6).toUpperCase(); // live: the server's keyed token; '—' for a record not loaded
   const maskPhone = (n) => '(•••) •••-' + n.slice(-4);
@@ -244,7 +244,7 @@
         <div class="topbar"><div class="crumbs">${(() => { const sec = navFor(u).find((x) => x[1].some((n) => n[0] === route)); return sec ? `<span class="eyebrow">${sec[0]}</span>` : route === 'patient' ? '<span class="eyebrow">Chart</span>' : ''; })()}<h1>${v.title}</h1>${v.sub ? `<small>${v.sub}</small>` : ''}</div>
           <div class="row" style="gap:8px">${T.topbarExtras ? T.topbarExtras(u) : ''}<span class="rolechip"><i>${ROLE_LABEL[u.role]}</i>${esc(scopeOf(u))}</span></div></div>
         <div class="strip" aria-hidden="true"></div>
-        <div class="content">${LIVE && route === 'home' ? `<div class="banner info"><p><b>Live mode.</b> Sign-in, your patient list, charts (problems, allergies, medications, labs, vitals), break-the-glass and the audit log come from the Tessera API, and nothing is stored on this device. Other modules still show synthetic demo data for your patients until Phase 3.</p></div>` : ''}${v.body}</div>
+        <div class="content">${LIVE && route === 'home' ? `<div class="banner info"><p><b>Live mode.</b> Sign-in, your patient list, charts, orders, results, notes, lab orders, the eMAR, pharmacist verification, vitals, care plans, rapid-response records, medication reconciliation, break-the-glass and the audit log come from the Tessera API, which checks every change. Nothing is stored on this device. Front office, billing, diagnostics and other modules still use synthetic demo data until Phase 4.</p></div>` : ''}${v.body}</div>
         <div class="demo-foot">Tessera Health prototype · synthetic patients · data stays on this device · not real-time</div>
       </div>
     </div>${UI.modal ? modalHtml() : ''}`;
@@ -658,7 +658,7 @@
     else if (!LIVE) v = VIEWS[route](u, args);
     else {
       // Live mode: modules not yet moved onto the API (Phase 3) may expect records this role is not sent
-      try { v = VIEWS[route](u, args); } catch (e) { console.error(e); v = { title: 'Not connected yet', sub: 'Live mode', body: '<div class="banner info"><p>This module still runs on synthetic demo data and needs records your role is not sent in live mode. It moves onto the Tessera API in Phase 3. Nothing was shown or changed.</p></div><div><a class="btn" href="#home">Back to overview</a></div>' }; }
+      try { v = VIEWS[route](u, args); } catch (e) { console.error(e); v = { title: 'Not connected yet', sub: 'Live mode', body: '<div class="banner info"><p>This module still runs on synthetic demo data and needs records your role is not sent in live mode. It moves onto the Tessera API in Phase 4. Nothing was shown or changed.</p></div><div><a class="btn" href="#home">Back to overview</a></div>' }; }
     }
     app.innerHTML = shell(u, route, v);
     T.after.forEach((fn) => { try { fn(u, route, args); } catch (e) { console.error(e); } });
@@ -673,7 +673,7 @@
   }
   function signOut(msg) {
     if (me()) audit(msg && /inactiv/.test(msg) ? 'session-timeout' : 'sign-out');
-    if (LIVE) { store.api('POST', '/api/auth/logout'); liveForget(); }
+    if (LIVE) { const pending = liveFlight; liveLogout = pending.then(() => store.api('POST', '/api/auth/logout')); liveForget(); }
     session = null; saveSession();
     // Clear every per-user screen state so nothing one user saw carries over to the next sign-in
     const keep = { revealed: UI.revealed, auditFilter: { q: '', btg: false } };
@@ -843,6 +843,84 @@
      The census from /api/bootstrap replaces the synthetic patients. Synthetic records about anyone
      outside it are dropped, so no screen can show a patient the server didn't permit. Opening a chart
      fetches it again so the server records that view. Signing out clears it all from memory. */
+
+  /* ---------- live clinical records (Phase 3) ----------
+     The server holds orders, results, notes, lab orders, MAR, pharmacist verification, vitals, care
+     plans, rapid-response events, medication reconciliation and chart updates. save() sends what
+     changed, with the version it was based on. A refused write is explained and that patient's
+     records are reloaded from the server, so the screen never shows something the server rejected. */
+  const LIVE_COLLS = { orders: 'arr', results: 'arr', notes: 'arr', labOrders: 'arr', rrEvents: 'arr', mar: 'mar', verified: 'verified', vitalsLog: 'pt', carePlans: 'pt', medrec: 'pt', patientPatches: 'pt' };
+  let liveSnap = new Map(), liveVer = {}, liveBusy = new Set(), liveQueued = false;
+  let liveFlight = Promise.resolve(), liveLogout = Promise.resolve(), liveEpoch = 0; // saves in order; sign-out waits for them; a new sign-in waits for sign-out
+  T.liveIdle = () => liveFlight.then(() => liveLogout);
+  const ownerOf = (c, k, x) => LIVE_COLLS[c] === 'arr' ? x && x.patient : LIVE_COLLS[c] === 'mar' ? k.split('|')[0] : LIVE_COLLS[c] === 'verified' ? ((S.orders || []).find((o) => o.id === k) || {}).patient : k;
+  function liveEach(fn, onlyPid) {
+    Object.keys(LIVE_COLLS).forEach((c) => {
+      const v = S[c]; if (!v) return;
+      if (LIVE_COLLS[c] === 'arr') v.forEach((x) => { if (x && x.id && (!onlyPid || x.patient === onlyPid)) fn(c, x.id, x); });
+      else Object.keys(v).forEach((k) => { if (!onlyPid || ownerOf(c, k, v[k]) === onlyPid) fn(c, k, v[k]); });
+    });
+  }
+  const applyPatches = (pid) => { const p = P(pid), f = (S.patientPatches || {})[pid]; if (p && f) Object.assign(p, clone(f)); };
+  function liveInstall(d) {
+    Object.keys(LIVE_COLLS).forEach((c) => { S[c] = clone((d.records || {})[c] || (LIVE_COLLS[c] === 'arr' ? [] : {})); }); // roles with no census get none
+    liveVer = Object.assign({}, d.versions); liveSnap = new Map(); liveBusy = new Set();
+    liveEach((c, k, x) => liveSnap.set(c + '|' + k, JSON.stringify(x)));
+    Object.keys(S.patientPatches).forEach(applyPatches);
+  }
+  function liveMerge(pid, d) {
+    liveEach((c, k) => liveSnap.delete(c + '|' + k), pid);
+    Object.keys(LIVE_COLLS).forEach((c) => {
+      const inc = clone((d.records || {})[c] || (LIVE_COLLS[c] === 'arr' ? [] : {}));
+      if (LIVE_COLLS[c] === 'arr') S[c] = (S[c] || []).filter((x) => x.patient !== pid).concat(inc);
+      else { S[c] = S[c] || {}; Object.keys(S[c]).forEach((k) => { if (ownerOf(c, k, S[c][k]) === pid) delete S[c][k]; }); Object.assign(S[c], inc); }
+    });
+    Object.assign(liveVer, d.versions || {});
+    liveEach((c, k, x) => liveSnap.set(c + '|' + k, JSON.stringify(x)), pid);
+    applyPatches(pid);
+  }
+  function liveRefresh(pid) { liveFlight = liveFlight.then(() => liveRefreshNow(pid)).catch((e) => console.error(e)); }
+  async function liveRefreshNow(pid) {
+    const r = await store.api('GET', '/api/patients/' + encodeURIComponent(pid));
+    if (r.status === 401) return liveExpired();
+    if (r.ok) { const p = P(pid); const np = livePatient(Object.assign({}, r.data.patient, { _access: r.data.access })); if (p) { Object.keys(p).forEach((k) => { if (!(k in np)) delete p[k]; }); Object.assign(p, np); } liveMerge(pid, r.data); }
+    if (me()) render();
+  }
+  function liveSync() {
+    if (!me() || liveQueued) return;
+    liveQueued = true;
+    const ep = liveEpoch;
+    liveFlight = liveFlight.then(() => new Promise((r) => queueMicrotask(r))).then(async () => {
+      liveQueued = false;
+      if (ep !== liveEpoch) return;
+      const writes = [];
+      liveEach((c, k, x) => {
+        const ck = c + '|' + k, j = JSON.stringify(x);
+        if (liveSnap.get(ck) === j || liveBusy.has(ck)) return;
+        const patient = ownerOf(c, k, x); if (!patient) return;
+        writes.push({ coll: c, key: k, patient, version: liveVer[ck] || 0, body: JSON.parse(j), _j: j });
+      });
+      if (!writes.length) return;
+      writes.forEach((w) => liveBusy.add(w.coll + '|' + w.key));
+      const refused = new Set(); let msg = '';
+      for (let i = 0; i < writes.length; i += 50) {
+        const batch = writes.slice(i, i + 50);
+        const r = await store.api('POST', '/api/records', { writes: batch.map(({ _j, ...w }) => w) });
+        if (ep !== liveEpoch) return; // signed out meanwhile: the write landed (or not) under the old session
+        if (r.status === 401) { liveBusy.clear(); return liveExpired(); }
+        const res = r.ok ? r.data.results : batch.map(() => ({ ok: false, error: r.data.error || 'Not saved.' }));
+        res.forEach((x, n) => {
+          const w = batch[n], ck = w.coll + '|' + w.key;
+          liveBusy.delete(ck);
+          if (x.ok) { liveVer[ck] = x.version; liveSnap.set(ck, w._j); }
+          else { refused.add(w.patient); msg = msg || x.error; }
+        });
+      }
+      if (refused.size) { toast('Not saved: ' + msg); refused.forEach((pid) => liveRefresh(pid)); }
+      liveSync(); // anything changed while these were in flight
+    }).catch((e) => console.error(e));
+  }
+
   let SEED0 = null; // pristine copy, taken at boot once every module has loaded
   function liveRestoreSeed(ids) {
     Object.keys(SEED0).forEach((k) => {
@@ -859,6 +937,7 @@
     liveRestoreSeed(new Set());
     S = withModules(freshState());
     UI.live = { stage: 'password' }; UI.liveChart = null; UI.liveAudit = null;
+    liveSnap = new Map(); liveVer = {}; liveBusy = new Set(); liveEpoch++;
   }
   function liveLoad(d, how) {
     const ids = new Set(d.patients.map((p) => p.id));
@@ -866,6 +945,7 @@
     SEED.patients.splice(0, SEED.patients.length, ...d.patients.map(livePatient));
     S = withModules(freshState());
     S.config = Object.assign(S.config || {}, { idleMin: d.config.idleMinutes, btgHours: d.config.btgHours });
+    liveInstall(d);
     S.btg = (d.btg || []).map((g, i) => ({ id: 'BTG-L' + i, user: d.user.id, patient: g.patient_id, reason: g.reason, text: g.justification, at: g.granted_at, expires: g.expires_at, reviewed: false }));
     let u = U(d.user.id);
     if (!u) { u = { id: d.user.id }; S.users.push(u); }
@@ -908,6 +988,7 @@
       </div></div></div>`;
   }
   FORMS['live-pw'] = async (f) => {
+    await liveLogout; // the previous session's sign-out must finish first: it shares the cookie
     UI.liveUser = f.username;
     const r = await store.api('POST', '/api/auth/password', { username: f.username, password: f.password });
     if (r.ok) { UI.live = { stage: 'mfa' }; UI.msg = ''; } else UI.msg = r.data.error || 'Sign-in failed.';
@@ -932,11 +1013,14 @@
       if (r.ok) {
         const np = livePatient(Object.assign({}, r.data.patient, { _access: r.data.access }));
         if (p) { Object.keys(p).forEach((k) => { if (!(k in np)) delete p[k]; }); Object.assign(p, np); } else { S.extraPatients = S.extraPatients || []; S.extraPatients.push(np); }
+        liveMerge(id, r.data);
         UI.liveChartState = 'ok';
       } else if (r.status === 403 && r.data.btg) {
         if (p) p._access = 'none';
-        UI.liveChartState = p ? 'ok' : 'missing';
-      } else { UI.liveChartState = 'missing'; UI.liveChartErr = r.data.error; }
+        else { const h = r.data.header || {}; S.extraPatients = S.extraPatients || []; S.extraPatients.push(livePatient({ id, token: h.token, age: h.age, sex: h.sex, dept: h.dept, unit: h.unit, name: 'Restricted record', mrn: '—', status: '—', code: 'Full code', _access: 'none', _stub: true })); }
+        audit('chart-access', { patient: P(id), outcome: 'blocked', detail: 'no care relationship (API)' });
+        UI.liveChartState = 'ok';
+      } else { audit('chart-access', { resource: id, outcome: 'denied', detail: `API ${r.status}` }); UI.liveChartState = 'missing'; UI.liveChartErr = r.data.error; }
       render();
     });
   }
@@ -977,7 +1061,8 @@
     toast(r.ok ? 'Review recorded.' : r.data.error || 'Could not record the review.');
     UI.liveAudit = null; render();
   }
-  async function liveBtg(f) {
+  function liveBtg(f) { liveFlight = liveFlight.then(() => liveBtgNow(f)).catch((e) => console.error(e)); return liveFlight; }
+  async function liveBtgNow(f) {
     const r = await store.api('POST', `/api/patients/${encodeURIComponent(f.p)}/btg`, { reason: f.reason, justification: (f.text || '').trim() });
     if (r.status === 401) return liveExpired();
     if (!r.ok) { toast(r.data.error || 'Emergency access was not granted.'); return; }
@@ -985,6 +1070,7 @@
     audit('break-the-glass', { patient: P(f.p), purpose: 'Emergency (break-the-glass)', detail: `${f.reason} (API grant ${r.data.grant})` });
     toast(`Emergency access granted for ${S.config.btgHours} hours. Privacy Office notified.`);
     UI.liveChart = null; render(); // refetch: the server now opens the chart under the grant
+    for (let i = 0; i < 200 && UI.liveChartState === 'loading'; i++) await new Promise((r) => setTimeout(r, 25));
   }
   async function liveSearch(q) {
     const u = me(); if (!u || !['doctor', 'nurse'].includes(u.role)) return;

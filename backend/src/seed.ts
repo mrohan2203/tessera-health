@@ -19,7 +19,7 @@ const SEED = ctx.window.TESSERA_SEED;
 
 const db = ownerPool(); const c = await db.connect();
 await c.query('begin');
-await c.query('truncate app.sessions, app.btg_grants, app.care_relationships, app.patients, app.users cascade');
+await c.query('truncate app.record_versions, app.records, app.sessions, app.btg_grants, app.care_relationships, app.patients, app.users cascade');
 
 const creds: Record<string, { password: string; totpSecret: string; role: string; name: string }> = {};
 for (const u of SEED.users) {
@@ -54,6 +54,17 @@ for (const u of SEED.users) for (const p of SEED.patients) {
     if (u.unit === 'PERIOP' && (SEED.ot || []).some((o: any) => o.patient === p.id)) await rel(u.id, p.id, 'theatre');
   }
 }
+// Clinical records (Phase 3), each encrypted under its patient's data key
+const deks = new Map<string, Buffer>();
+for (const p of SEED.patients) { const r = await c.query('select dek_wrapped from app.patients where id = $1', [p.id]); deks.set(p.id, kms.unwrap(r.rows[0].dek_wrapped)); }
+const attending = (pid: string) => SEED.patients.find((p: any) => p.id === pid)?.attending || SEED.users.find((u: any) => u.role === 'doctor').id;
+let nrec = 0;
+const rec = async (coll: string, key: string, pid: string, body: unknown) => {
+  if (!deks.has(pid)) return;
+  await c.query('insert into app.records (coll, key, patient_id, body_enc, created_by, updated_by) values ($1,$2,$3,$4,$5,$5)', [coll, key, pid, encField(deks.get(pid)!, body), attending(pid)]); nrec++;
+};
+for (const coll of ['orders', 'results', 'notes', 'labOrders']) for (const x of SEED[coll] || []) await rec(coll, x.id, x.patient, x);
+for (const [k, v] of Object.entries(SEED.marCharted || {})) await rec('mar', k, k.split('|')[0], v);
 await c.query('commit'); c.release(); await db.end();
 writeFileSync(new URL('../.dev-credentials.json', import.meta.url), JSON.stringify(creds, null, 1), { mode: 0o600 });
-console.log(`seeded ${SEED.users.length} users, ${SEED.patients.length} patients, ${n} care relationships; development credentials in backend/.dev-credentials.json (git-ignored)`);
+console.log(`seeded ${SEED.users.length} users, ${SEED.patients.length} patients, ${n} care relationships, ${nrec} clinical records; development credentials in backend/.dev-credentials.json (git-ignored)`);
