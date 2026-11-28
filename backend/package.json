@@ -1,0 +1,25 @@
+{
+  "name": "tessera-api",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Tessera Health API: Phase 2 security core (auth + MFA, roles, care relationships, encrypted identifiers, append-only audit, break-the-glass).",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "db:start": "sh scripts/db.sh start",
+    "db:stop": "sh scripts/db.sh stop",
+    "db:reset": "sh scripts/db.sh reset",
+    "migrate": "node --experimental-strip-types --no-warnings src/migrate.ts",
+    "seed": "node --experimental-strip-types --no-warnings src/seed.ts",
+    "dev": "node --experimental-strip-types --no-warnings src/server.ts",
+    "totp": "node --experimental-strip-types --no-warnings src/devtotp.ts",
+    "test": "node --experimental-strip-types --no-warnings --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.5",
+    "fastify": "^5.12.8",
+    "pg": "^8.23.1"
+  }
+}

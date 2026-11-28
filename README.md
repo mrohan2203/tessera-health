@@ -79,6 +79,8 @@ await import('/tests/sweep.js?' + Date.now()).then((m) => m.run())      // every
 
 The security rules are enforced in the browser today, which is fine for a pitch but not for real patients. [`backend/README.md`](backend/README.md) has the plan for moving them to a server, in five phases. Phase 1 is done: every persisted read and write now goes through one data layer ([`tessera/store.js`](tessera/store.js)) with a demo adapter (today's behaviour) and a live-adapter contract. [`backend/data-access-map.md`](backend/data-access-map.md) lists each data collection with the screens that read and write it.
 
+Phase 2 is done locally: a real API and database in [`backend/`](backend/) with sign-in by password and authenticator code, encrypted identifiers and records, an append-only hash-chained audit log, care relationships checked by the API and again by row-level security, and break-the-glass. The app's live mode (`?mode=live`) uses it for sign-in, patient lists, charts and the audit log. The published link stays in demo mode.
+
 ## Credits
 
 3D anatomy: BodyParts3D, © The Database Center for Life Science, licensed under [CC Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/). Meshes were simplified and repacked by [`tools/build_anatomy.py`](tools/build_anatomy.py) (all 2,234 structures kept, 6.68M → 1.6M triangles) and are drawn by a small WebGL viewer in [`tessera/m-anatomy.js`](tessera/m-anatomy.js).

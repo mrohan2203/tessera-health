@@ -1,0 +1,253 @@
+/* Tessera API, Phase 2: the security core.
+   Sign-in is two steps (password, then a 6-digit authenticator code). The session is an HttpOnly,
+   SameSite=Strict cookie whose token is stored only as a peppered hash; it locks after IDLE_MINUTES
+   without a request and expires after 12 hours. Every route that touches health data authenticates,
+   authorises (role + care relationship, deny by default, then row-level security in Postgres) and
+   writes its audit row in the same transaction. State-changing requests must carry X-Tessera: 1
+   (with SameSite=Strict this blocks cross-site request forgery).
+   Development identity: local users with passwords and TOTP. Production: the OIDC provider (Okta or
+   Entra ID) issues identity and MFA; the session and every rule below stay the same. */
+import Fastify from 'fastify';
+import cookie from '@fastify/cookie';
+import { appPool, withAudit, auditOnly, type Actor } from './db.ts';
+import { kms, decText, decJson, openWithKek, blindIndex, verifyPassword, verifyTotp, newSessionToken, sessionHash } from './crypto.ts';
+import { env } from './env.ts';
+
+const COOKIE = 'tessera_sid';
+const PURPOSE: Record<string, string> = { doctor: 'Treatment', nurse: 'Treatment', pharmacist: 'Treatment', patient: 'Individual access', admin: 'Operations', quality: 'Operations' };
+const CHART_ROLES = new Set(['doctor', 'nurse', 'pharmacist']);
+const BTG_ROLES = new Set(['doctor', 'nurse']);
+const AUDIT_ROLES = new Set(['admin', 'quality']);
+
+export function build() {
+  const app = Fastify({ logger: false, trustProxy: true, bodyLimit: 64 * 1024 });
+  app.register(cookie);
+
+  // Security headers, CORS for the app origin only, CSRF header on writes
+  app.addHook('onRequest', async (req, reply) => {
+    reply.header('Cache-Control', 'no-store').header('X-Content-Type-Options', 'nosniff').header('Referrer-Policy', 'no-referrer')
+      .header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'").header('Cross-Origin-Resource-Policy', 'same-site');
+    if (env.PRODUCTION) reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    const origin = req.headers.origin;
+    if (origin === env.APP_ORIGIN) reply.header('Access-Control-Allow-Origin', origin).header('Access-Control-Allow-Credentials', 'true').header('Vary', 'Origin');
+    if (req.method === 'OPTIONS') { reply.header('Access-Control-Allow-Methods', 'GET, POST').header('Access-Control-Allow-Headers', 'Content-Type, X-Tessera').header('Access-Control-Max-Age', '600'); return reply.code(204).send(); }
+    if (req.method !== 'GET' && req.headers['x-tessera'] !== '1') return reply.code(403).send({ error: 'missing X-Tessera header' });
+    if (origin && origin !== env.APP_ORIGIN) return reply.code(403).send({ error: 'origin not allowed' });
+  });
+
+  /* ---------- sessions ---------- */
+  const setCookie = (reply: any, token: string) => reply.setCookie(COOKIE, token, { httpOnly: true, sameSite: 'strict', secure: env.PRODUCTION, path: '/api', maxAge: 12 * 3600 });
+  async function session(req: any, need: 'password' | 'active') {
+    const t = req.cookies[COOKIE]; if (!t) return null;
+    const { rows } = await appPool.query(`select s.id_hash, s.stage, s.last_seen, s.expires_at, s.revoked_at, u.id, u.role, u.name, u.username, u.dept, u.unit, u.title, u.patient_id, u.status
+      from app.sessions s join app.users u on u.id = s.user_id where s.id_hash = $1`, [sessionHash(t)]);
+    const s = rows[0]; if (!s || s.revoked_at || s.status !== 'active' || new Date(s.expires_at) < new Date()) return null;
+    if (need === 'active' && s.stage !== 'active') return null;
+    if (need === 'active' && Date.now() - new Date(s.last_seen).getTime() > env.IDLE_MINUTES * 60000) {
+      await appPool.query('update app.sessions set revoked_at = now() where id_hash = $1', [s.id_hash]);
+      await auditOnly({ id: s.id, role: s.role }, req.ip, { action: 'session-timeout', outcome: 'success' });
+      return null;
+    }
+    if (need === 'active') await appPool.query('update app.sessions set last_seen = now() where id_hash = $1', [s.id_hash]);
+    return s;
+  }
+  const requireUser = async (req: any, reply: any) => { const s = await session(req, 'active'); if (!s) { reply.code(401).send({ error: 'sign-in required' }); return null; } return s; };
+  const actor = (s: any): Actor => ({ id: s.id, role: s.role, patient_id: s.patient_id });
+  const publicUser = (s: any) => ({ id: s.id, name: s.role === "patient" ? null : s.name /* portal names come from the encrypted record via /api/bootstrap */, username: s.username, role: s.role, dept: s.dept, unit: s.unit, title: s.title, patientId: s.patient_id });
+
+  /* ---------- sign-in: password, then authenticator code ---------- */
+  app.post('/api/auth/password', async (req: any, reply) => {
+    const { username, password } = req.body || {};
+    const { rows } = await appPool.query('select * from app.users where username = $1', [String(username || '')]);
+    const u = rows[0];
+    const fail = async (why: string) => { await auditOnly(u ? { id: u.id, role: u.role } : null, req.ip, { action: 'sign-in', outcome: 'denied', detail: why }); return reply.code(401).send({ error: 'Username or password is incorrect, or the account is locked.' }); };
+    if (!u) return fail(`unknown user ${String(username).slice(0, 40)}`);
+    if (u.status !== 'active') return fail('account suspended');
+    if (u.locked_until && new Date(u.locked_until) > new Date()) return fail('locked after repeated failures');
+    if (!verifyPassword(String(password || ''), u.password_hash)) {
+      await appPool.query('update app.users set failed_logins = failed_logins + 1, locked_until = case when failed_logins + 1 >= 5 then now() + interval \'15 minutes\' else locked_until end where id = $1', [u.id]);
+      return fail('wrong password');
+    }
+    const token = newSessionToken();
+    await appPool.query("insert into app.sessions (id_hash, user_id, stage, expires_at, ip, ua) values ($1,$2,'password', now() + interval '5 minutes', $3, $4)", [sessionHash(token), u.id, req.ip, String(req.headers['user-agent'] || '').slice(0, 200)]);
+    setCookie(reply, token);
+    return { next: 'mfa' };
+  });
+
+  app.post('/api/auth/mfa', async (req: any, reply) => {
+    const s = await session(req, 'password'); if (!s || s.stage !== 'password') return reply.code(401).send({ error: 'Start again with your password.' });
+    const { rows } = await appPool.query('select totp_secret_enc from app.users where id = $1', [s.id]);
+    if (!verifyTotp(openWithKek(rows[0].totp_secret_enc), String((req.body || {}).code || ''))) {
+      await appPool.query('update app.users set failed_logins = failed_logins + 1, locked_until = case when failed_logins + 1 >= 5 then now() + interval \'15 minutes\' else locked_until end where id = $1', [s.id]);
+      await auditOnly(actor(s), req.ip, { action: 'sign-in', outcome: 'denied', detail: 'wrong authenticator code' });
+      return reply.code(401).send({ error: 'That code is not right. Codes change every 30 seconds.' });
+    }
+    // Rotate the token at privilege change so a pre-MFA token can never become a full session
+    await appPool.query('update app.sessions set revoked_at = now() where id_hash = $1', [s.id_hash]);
+    const token = newSessionToken();
+    await appPool.query("insert into app.sessions (id_hash, user_id, stage, expires_at, ip, ua) values ($1,$2,'active', now() + interval '12 hours', $3, $4)", [sessionHash(token), s.id, req.ip, String(req.headers['user-agent'] || '').slice(0, 200)]);
+    await appPool.query('update app.users set failed_logins = 0, locked_until = null where id = $1', [s.id]);
+    await auditOnly(actor(s), req.ip, { action: 'sign-in', outcome: 'success', detail: 'password + authenticator' });
+    setCookie(reply, token);
+    return { user: publicUser(s) };
+  });
+
+  app.post('/api/auth/logout', async (req: any, reply) => {
+    const s = await session(req, 'password');
+    if (s) { await appPool.query('update app.sessions set revoked_at = now() where id_hash = $1', [s.id_hash]); await auditOnly(actor(s), req.ip, { action: 'sign-out' }); }
+    reply.clearCookie(COOKIE, { path: '/api' });
+    return { ok: true };
+  });
+
+  app.get('/api/me', async (req, reply) => { const s = await requireUser(req, reply); if (!s) return; return { user: publicUser(s) }; });
+
+  /* ---------- patients ---------- */
+  const decode = (row: any, full: boolean) => {
+    const dek = kms.unwrap(row.dek_wrapped);
+    const base: any = { id: row.id, token: row.token, name: decText(dek, row.name_enc), mrn: decText(dek, row.mrn_enc), dob: decText(dek, row.dob_enc), age: row.age, sex: row.sex, dept: row.dept, consults: row.consults, unit: row.unit, bed: row.bed, status: row.status, code: row.code, attending: row.attending };
+    if (full) Object.assign(base, decJson(dek, row.clinical_enc), { phone: decText(dek, row.phone_enc), memberId: decText(dek, row.member_id_enc), payer: decText(dek, row.payer_enc) });
+    return base;
+  };
+  const accessOf = async (c: any, userId: string, pid: string) => {
+    const r = await c.query(`select (select string_agg(kind, ',') from app.care_relationships where user_id = $1 and patient_id = $2) as rel,
+      (select max(expires_at) from app.btg_grants where user_id = $1 and patient_id = $2 and expires_at > now()) as btg`, [userId, pid]);
+    return r.rows[0];
+  };
+
+  app.get('/api/patients', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    if (!CHART_ROLES.has(s.role) && s.role !== 'patient') { await auditOnly(actor(s), req.ip, { action: 'list-patients', outcome: 'denied', detail: `role ${s.role}` }); return reply.code(403).send({ error: 'Your role has no patient list.' }); }
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const { rows } = await c.query('select * from app.patients order by id'); // row-level security decides which rows exist for this caller
+      const list = rows.map((r: any) => decode(r, false));
+      audit({ action: 'list-patients', resource: 'patients', patient_token: list.map((p: any) => p.token).join(' '), purpose: PURPOSE[s.role], detail: `${list.length} returned` });
+      return { patients: list };
+    });
+  });
+
+  app.get('/api/patients/:id', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    const pid = String(req.params.id);
+    if (!CHART_ROLES.has(s.role) && !(s.role === 'patient' && s.patient_id === pid)) {
+      await auditOnly(actor(s), req.ip, { action: 'chart-denied', resource: pid, outcome: 'denied', detail: `role ${s.role} cannot open charts` });
+      return reply.code(403).send({ error: 'Your role cannot open charts.' });
+    }
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const { rows } = await c.query('select * from app.patients where id = $1', [pid]);
+      if (!rows.length) {
+        const exists = (await c.query('select app.patient_exists($1) as e', [pid])).rows[0].e;
+        audit({ action: 'chart-denied', resource: pid, outcome: 'denied', detail: exists ? 'no care relationship' : 'no such patient' });
+        reply.code(exists ? 403 : 404);
+        return exists && BTG_ROLES.has(s.role) ? { error: 'Not in your care. Emergency access (break the glass) is available and will be reviewed.', btg: true } : { error: 'Not available.' };
+      }
+      const a = s.role === 'patient' ? { rel: 'self' } : await accessOf(c, s.id, pid);
+      const via = a.rel ? 'care' : a.btg ? 'btg' : s.role === 'pharmacist' ? 'pharmacy' : 'care';
+      let p = decode(rows[0], true);
+      if (s.role === 'pharmacist') p = { id: p.id, token: p.token, name: p.name, mrn: p.mrn, age: p.age, sex: p.sex, unit: p.unit, bed: p.bed, weightKg: p.weightKg, allergies: p.allergies, allergiesUnknown: p.allergiesUnknown, meds: p.meds, labs: (p.labs || []).filter((l: any) => /creatinine|egfr|potassium|inr/i.test(l.test)) };
+      audit({ action: 'view-chart', resource: s.role === 'pharmacist' ? 'medication profile' : 'chart', patient_token: rows[0].token, purpose: via === 'btg' ? 'Emergency (break-the-glass)' : PURPOSE[s.role], detail: `access: ${via}${a.btg ? `, grant until ${new Date(a.btg).toISOString()}` : ''}` });
+      return { patient: p, access: via };
+    });
+  });
+
+  /* ---------- break the glass ---------- */
+  app.post('/api/patients/:id/btg', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    const pid = String(req.params.id); const { reason, justification } = req.body || {};
+    if (!BTG_ROLES.has(s.role)) { await auditOnly(actor(s), req.ip, { action: 'break-the-glass', resource: pid, outcome: 'denied', detail: `role ${s.role}` }); return reply.code(403).send({ error: 'Your role cannot use emergency access.' }); }
+    if (!reason || String(justification || '').trim().length < 20) return reply.code(400).send({ error: 'Choose a reason and write at least 20 characters of justification.' });
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      if (!(await c.query('select app.patient_exists($1) as e', [pid])).rows[0].e) { reply.code(404); return { error: 'Not available.' }; }
+      const g = await c.query(`insert into app.btg_grants (user_id, patient_id, reason, justification, expires_at) values ($1,$2,$3,$4, now() + make_interval(hours => $5)) returning id, expires_at`, [s.id, pid, String(reason).slice(0, 80), String(justification).slice(0, 1000), env.BTG_HOURS]);
+      const tokRow = await c.query('select token from app.patients where id = $1', [pid]); // visible now: the grant is in this transaction
+      audit({ action: 'break-the-glass', resource: pid, patient_token: tokRow.rows[0]?.token || '', purpose: 'Emergency (break-the-glass)', detail: `${reason}: ${String(justification).slice(0, 200)} · grant ${g.rows[0].id} until ${new Date(g.rows[0].expires_at).toISOString()}` });
+      return { grant: g.rows[0].id, expires: g.rows[0].expires_at };
+    });
+  });
+
+  app.get('/api/btg', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    if (!AUDIT_ROLES.has(s.role)) { await auditOnly(actor(s), req.ip, { action: 'btg-review-list', outcome: 'denied' }); return reply.code(403).send({ error: 'Not permitted.' }); }
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const { rows } = await c.query('select g.id, g.user_id, u.name as user_name, g.patient_id, app.patient_token(g.patient_id) as token, g.reason, g.justification, g.granted_at, g.expires_at, g.reviewed_by, g.reviewed_at, g.review_outcome from app.btg_grants g join app.users u on u.id = g.user_id order by g.granted_at desc limit 200');
+      audit({ action: 'btg-review-list', detail: `${rows.length} grants` });
+      return { grants: rows };
+    });
+  });
+  app.post('/api/btg/:id/review', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    if (!AUDIT_ROLES.has(s.role)) return reply.code(403).send({ error: 'Not permitted.' });
+    const outcome = (req.body || {}).outcome; if (!['appropriate', 'inappropriate'].includes(outcome)) return reply.code(400).send({ error: 'outcome must be appropriate or inappropriate' });
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const r = await c.query('update app.btg_grants set reviewed_by = $1, reviewed_at = now(), review_outcome = $2 where id = $3 and reviewed_at is null and user_id <> $1 returning user_id', [s.id, outcome, +req.params.id]);
+      if (!r.rowCount) { reply.code(409); return { error: 'Already reviewed, not found, or your own access.' }; }
+      audit({ action: 'btg-review', resource: String(req.params.id), detail: outcome });
+      return { ok: true };
+    });
+  });
+
+  /* ---------- audit log ---------- */
+  app.get('/api/audit', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    if (!AUDIT_ROLES.has(s.role)) { await auditOnly(actor(s), req.ip, { action: 'view-audit', outcome: 'denied' }); return reply.code(403).send({ error: 'Not permitted.' }); }
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const lim = Math.min(500, Math.max(1, +(req.query.limit || 100)));
+      const { rows } = await c.query('select seq, ts, actor, role, action, resource, patient_token, purpose, outcome, detail, hash from audit.log order by seq desc limit $1', [lim]);
+      audit({ action: 'view-audit', detail: `${rows.length} rows` }); // reading the audit log is itself audited
+      return { events: rows };
+    });
+  });
+  app.get('/api/audit/verify', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    if (!AUDIT_ROLES.has(s.role)) return reply.code(403).send({ error: 'Not permitted.' });
+    return withAudit(actor(s), req.ip, async (c, audit) => { const r = (await c.query('select * from audit.verify()')).rows[0]; audit({ action: 'verify-audit-chain', detail: r.ok ? `intact (${r.checked})` : `broken at ${r.broken_at}` }); return r; });
+  });
+
+  /* ---------- bootstrap for the app's live adapter ----------
+     The census the app's worklists and dashboards run on: the full record of every patient this caller
+     may open (row-level security decides), projected for pharmacists. Each patient disclosed gets its
+     own audit row; opening a chart later writes its own view-chart row. */
+  const projectPharm = (p: any) => ({ id: p.id, token: p.token, name: p.name, mrn: p.mrn, age: p.age, sex: p.sex, dept: p.dept, unit: p.unit, bed: p.bed, status: p.status, code: p.code, attending: p.attending, weightKg: p.weightKg, heightCm: p.heightCm, allergies: p.allergies, allergiesUnknown: p.allergiesUnknown, meds: p.meds, labs: (p.labs || []).filter((l: any) => /creatinine|egfr|potassium|inr/i.test(l.test)), _projection: 'medication-profile' });
+  app.get('/api/bootstrap', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    const cfg = { idleMinutes: env.IDLE_MINUTES, btgHours: env.BTG_HOURS };
+    if (!CHART_ROLES.has(s.role) && s.role !== 'patient') return { user: publicUser(s), patients: [], config: cfg };
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const { rows } = await c.query('select * from app.patients order by id');
+      const rel = s.role === 'patient' ? [] : (await c.query('select patient_id, string_agg(kind, \',\') as kinds from app.care_relationships where user_id = $1 group by patient_id', [s.id])).rows;
+      const btg = s.role === 'patient' ? [] : (await c.query('select patient_id, reason, justification, granted_at, expires_at from app.btg_grants where user_id = $1 and expires_at > now()', [s.id])).rows;
+      const patients = rows.map((r: any) => {
+        let p = decode(r, true);
+        if (s.role === 'pharmacist') p = projectPharm(p);
+        const k = rel.find((x: any) => x.patient_id === r.id);
+        p._access = s.role === 'patient' ? 'self' : k ? 'care' : btg.some((g: any) => g.patient_id === r.id) ? 'btg' : s.role === 'pharmacist' ? 'pharmacy' : 'care';
+        p._rel = k ? k.kinds : '';
+        audit({ action: 'census', resource: s.role === 'pharmacist' ? 'medication profile' : 'worklist record', patient_token: r.token, purpose: p._access === 'btg' ? 'Emergency (break-the-glass)' : PURPOSE[s.role], detail: `access: ${p._access}` });
+        return p;
+      });
+      return { user: publicUser(s), patients, btg, config: cfg };
+    });
+  });
+
+  /* Hospital-wide search: exact match on the keyed hash (blind index) of an MRN or full name, so the
+     database never needs plaintext to search. Returns a minimal header and whether the caller has access. */
+  app.get('/api/search', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    if (!BTG_ROLES.has(s.role)) return reply.code(403).send({ error: 'Not permitted.' });
+    const q = String(req.query.q || '').trim(); if (q.length < 3) return reply.code(400).send({ error: 'Enter a full MRN or full name.' });
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const { rows } = await c.query('select id, token, age, sex, dept, unit from app.patients_directory($1)', [blindIndex(q)]);
+      audit({ action: 'search-patients', resource: 'hospital-wide', patient_token: rows.map((r: any) => r.token).join(' '), purpose: PURPOSE[s.role], detail: `${rows.length} match(es)` });
+      return { matches: rows };
+    });
+  });
+
+  app.get('/api/health', async () => ({ ok: true }));
+  app.setErrorHandler((err, _req, reply) => { reply.code(err.statusCode && err.statusCode < 500 ? err.statusCode : 500).send({ error: err.statusCode && err.statusCode < 500 ? err.message : 'Something went wrong. Nothing was changed.' }); });
+  return app;
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const app = build();
+  await app.listen({ port: env.API_PORT, host: 'localhost' }); // same site as the app on localhost, so the SameSite=Strict cookie is sent
+  console.log(`Tessera API on http://localhost:${env.API_PORT} (app origin ${env.APP_ORIGIN})`);
+}

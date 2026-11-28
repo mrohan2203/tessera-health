@@ -8,6 +8,7 @@
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
   const store = window.TesseraStore;
+  const LIVE = !!store.live; // live mode: sign-in, census, charts and break-the-glass come from the Tessera API
   const idleMin = () => (S && S.config && S.config.idleMin) || 15;
   const IDLE_MS_FN = () => idleMin() * 60 * 1000;
   const DEPT = SEED.departments, UNIT = SEED.units;
@@ -38,7 +39,7 @@
   const me = () => (session ? U(session.userId) : null);
   const nid = (prefix) => prefix + '-' + (++S.seq);
   function fnv(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h.toString(16).padStart(8, '0'); }
-  const tok = (p) => 'PT-' + fnv('bayview|' + p.mrn).slice(0, 6).toUpperCase();
+  const tok = (p) => !p ? '—' : p.token || 'PT-' + fnv('bayview|' + p.mrn).slice(0, 6).toUpperCase(); // live: the server's keyed token; '—' for a record not loaded
   const maskPhone = (n) => '(•••) •••-' + n.slice(-4);
   const fmtPhone = (n) => `(${n.slice(0, 3)}) ${n.slice(3, 6)}-${n.slice(6)}`;
   const maskId = (m) => '••••' + m.slice(-4);
@@ -90,6 +91,7 @@
   /* ---------------- access policy (default deny) ---------------- */
   function careRel(u, p) {
     if (!u || !p) return false;
+    if (LIVE) return u.role !== 'patient' && (p._access === 'care' || p._access === 'pharmacy'); // the server decided, from care relationships
     if (u.role === 'doctor') return p.dept === u.dept || (p.consults || []).includes(u.dept) || (u.dept === 'EMER' && (S.er || []).some((e) => e.patient === p.id));
     if (u.role === 'nurse') return (!!p.unit && (p.unit === u.unit || (SEED.unitGroups[u.unit] || []).includes(p.unit))) || (u.unit === 'PERIOP' && (S.ot || []).some((c) => c.patient === p.id));
     if (u.role === 'pharmacist') return true; // medication profile only
@@ -242,7 +244,7 @@
         <div class="topbar"><div class="crumbs">${(() => { const sec = navFor(u).find((x) => x[1].some((n) => n[0] === route)); return sec ? `<span class="eyebrow">${sec[0]}</span>` : route === 'patient' ? '<span class="eyebrow">Chart</span>' : ''; })()}<h1>${v.title}</h1>${v.sub ? `<small>${v.sub}</small>` : ''}</div>
           <div class="row" style="gap:8px">${T.topbarExtras ? T.topbarExtras(u) : ''}<span class="rolechip"><i>${ROLE_LABEL[u.role]}</i>${esc(scopeOf(u))}</span></div></div>
         <div class="strip" aria-hidden="true"></div>
-        <div class="content">${v.body}</div>
+        <div class="content">${LIVE && route === 'home' ? `<div class="banner info"><p><b>Live mode.</b> Sign-in, your patient list, charts (problems, allergies, medications, labs, vitals), break-the-glass and the audit log come from the Tessera API, and nothing is stored on this device. Other modules still show synthetic demo data for your patients until Phase 3.</p></div>` : ''}${v.body}</div>
         <div class="demo-foot">Tessera Health prototype · synthetic patients · data stays on this device · not real-time</div>
       </div>
     </div>${UI.modal ? modalHtml() : ''}`;
@@ -321,7 +323,7 @@
   VIEWS.patients = (u) => {
     const q = UI.search.trim().toLowerCase();
     let list = myPatients(u);
-    if (q) list = allPts().filter((p) => p.name.toLowerCase().includes(q) || p.mrn.toLowerCase().includes(q));
+    if (q) list = allPts().filter((p) => (p._stub ? p._match === q : p.name.toLowerCase().includes(q) || p.mrn.toLowerCase().includes(q)));
     audit('list-patients', { resource: q ? `search "${q}"` : 'my patients', patients: list.map(tok).join(' '), detail: `${list.length} returned` });
     const rows = list.map((p) => {
       const acc = chartAccess(u, p);
@@ -428,11 +430,11 @@
 
   function viewBtg(u, p) {
     return { title: 'Restricted record', sub: 'No care relationship', body:
-      `<div class="banner crit"><p><b>${esc(p.name)}</b> (MRN ${p.mrn}, ${p.age}${p.sex}) is under ${esc(DEPT[p.dept])}${p.unit ? ', ' + esc(UNIT[p.unit]) : ''}. You don't have a care relationship with this patient, so the chart is closed. This attempt was logged.</p></div>` +
+      `<div class="banner crit"><p>${p._stub ? `This patient (${p.age}${p.sex})` : `<b>${esc(p.name)}</b> (MRN ${p.mrn}, ${p.age}${p.sex})`} is under ${esc(DEPT[p.dept])}${p.unit ? ', ' + esc(UNIT[p.unit]) : ''}. You don't have a care relationship with this patient, so the chart is closed. This attempt was logged.</p></div>` +
       panel('Break the glass', `<p>Use emergency access only when delay would harm the patient. Access lasts ${(S.config && S.config.btgHours) || 4} hours, the Privacy Office is notified now, and the access is reviewed within 24 hours.</p>
         <form data-form="btg" class="stack"><input type="hidden" name="p" value="${p.id}">
           <div class="field"><label for="btg-r">Reason</label><select id="btg-r" name="reason" required><option value="">Choose a reason</option><option>Emergency treatment</option><option>Consult requested, not yet entered</option><option>Covering for a colleague</option><option>Rapid response / code team</option></select></div>
-          <div class="field"><label for="btg-t">Clinical justification</label><textarea id="btg-t" name="text" required minlength="15" placeholder="What is happening and why you need this record now"></textarea><small>At least 15 characters.</small></div>
+          <div class="field"><label for="btg-t">Clinical justification</label><textarea id="btg-t" name="text" required minlength="20" placeholder="What is happening and why you need this record now"></textarea><small>At least 20 characters.</small></div>
           <label class="row" style="gap:8px"><input type="checkbox" name="ack" required> I understand this access is logged and reviewed.</label>
           <div class="row"><button class="btn danger" type="submit">Open chart with emergency access</button><a class="btn" href="#patients">Cancel</a></div>
         </form>`) };
@@ -609,10 +611,10 @@
   }
   VIEWS.audit = () => {
     const f = UI.auditFilter;
-    let list = S.audit.slice().reverse();
+    let list = (LIVE ? (UI.liveAudit || { events: [] }).events : S.audit).slice().reverse();
     if (f.btg) list = list.filter((e) => /break-the-glass|btg/.test(e.action));
     if (f.q) { const q = f.q.toLowerCase(); list = list.filter((e) => JSON.stringify(e).toLowerCase().includes(q) || ((U(e.actor) || {}).name || '').toLowerCase().includes(q)); }
-    const btg = S.btg.slice().reverse().map((g) => `<tr><td>${timeStr(g.at)}</td><td>${esc(U(g.user).name)}</td><td class="mono">${tok(P(g.patient))}</td><td>${esc(g.reason)}<span class="sub">${esc(g.text)}</span></td><td>${g.reviewed ? pill('ok', 'Reviewed') : `<button class="btn small primary" data-act="btg-review" data-g="${g.id}">Mark reviewed</button>`}</td></tr>`);
+    const btg = (LIVE ? (UI.liveAudit || { grants: [] }).grants : S.btg).slice().reverse().map((g) => `<tr><td>${timeStr(g.at)}</td><td>${esc((U(g.user) || { name: g.user }).name)}</td><td class="mono">${esc(g.token || tok(P(g.patient)))}</td><td>${esc(g.reason)}<span class="sub">${esc(g.text)}</span></td><td>${g.reviewed ? pill('ok', 'Reviewed') : `<button class="btn small primary" data-act="btg-review" data-g="${g.id}">Mark reviewed</button>`}</td></tr>`);
     const cr = UI.chainResult;
     return { title: 'Audit log', sub: 'Append-only · hash-chained · patient tokens instead of names', body:
       `<div class="row between"><form data-form="afilter" class="row"><input class="search" name="q" value="${esc(f.q)}" placeholder="Filter by user, action, token" aria-label="Filter audit"><label class="row" style="gap:6px"><input type="checkbox" name="btg" ${f.btg ? 'checked' : ''}> Break-the-glass only</label><button class="btn" type="submit">Apply</button></form>
@@ -647,13 +649,17 @@
   function render() {
     const app = $('#app');
     const u = me();
-    if (!u) { app.innerHTML = UI.pending ? viewMfa() : viewLogin(); return; }
+    if (!u) { app.innerHTML = LIVE ? viewLiveLogin() : UI.pending ? viewMfa() : viewLogin(); return; }
     if (u.status !== 'active') { signOut('This account is suspended.'); return; }
     const [route, ...args] = (location.hash.slice(1) || 'home').split('-');
     const allowed = route === 'patient' || navIds(u).includes(route) || ((T.extraRoutes || {})[u.role] || []).includes(route);
     let v;
     if (!allowed || !VIEWS[route]) { audit('route-denied', { resource: '#' + route, outcome: 'denied' }); v = viewDenied(u, `the "${route}" page`); }
-    else v = VIEWS[route](u, args);
+    else if (!LIVE) v = VIEWS[route](u, args);
+    else {
+      // Live mode: modules not yet moved onto the API (Phase 3) may expect records this role is not sent
+      try { v = VIEWS[route](u, args); } catch (e) { console.error(e); v = { title: 'Not connected yet', sub: 'Live mode', body: '<div class="banner info"><p>This module still runs on synthetic demo data and needs records your role is not sent in live mode. It moves onto the Tessera API in Phase 3. Nothing was shown or changed.</p></div><div><a class="btn" href="#home">Back to overview</a></div>' }; }
+    }
     app.innerHTML = shell(u, route, v);
     T.after.forEach((fn) => { try { fn(u, route, args); } catch (e) { console.error(e); } });
   }
@@ -667,11 +673,12 @@
   }
   function signOut(msg) {
     if (me()) audit(msg && /inactiv/.test(msg) ? 'session-timeout' : 'sign-out');
+    if (LIVE) { store.api('POST', '/api/auth/logout'); liveForget(); }
     session = null; saveSession();
     // Clear every per-user screen state so nothing one user saw carries over to the next sign-in
     const keep = { revealed: UI.revealed, auditFilter: { q: '', btg: false } };
     Object.keys(UI).forEach((k) => { delete UI[k]; });
-    Object.assign(UI, keep, { pending: null, modal: null, search: '' });
+    Object.assign(UI, keep, { pending: null, modal: null, search: '' }, LIVE ? { live: { stage: 'password' } } : {});
     UI.revealed.clear();
     UI.msg = msg || '';
     history.replaceState(null, '', location.pathname + location.search);
@@ -738,8 +745,8 @@
     query: (d) => openModal({ title: 'Coding query', form: 'query', submit: 'Send to physician', body: `<input type="hidden" name="c" value="${d.c}"><div class="field"><label for="cqy">Question</label><textarea id="cqy" name="text" required placeholder="e.g. Please clarify heart failure type and acuity for I50.x"></textarea><small>Billing can ask; only the physician can change the diagnosis.</small></div>` }),
     identify: () => openModal({ title: 'Show identified list', form: 'identify', submit: 'Show names', body: `<div class="field"><label for="idp">Purpose</label><select id="idp" name="purpose" required><option value="">Choose</option><option>Care-gap outreach for attributed patients</option><option>Medical record review for hybrid measure</option><option>NCQA audit primary-source verification</option></select></div><p class="muted">The reveal lasts until you sign out and is logged.</p>` }),
     'gap-done': (d) => { S.gapsDone[d.g] = true; const g = SEED.gaps.find((x) => x.patient + x.measure === d.g); audit('gap-addressed', { patient: P(g.patient), detail: g.measure }); save(); render(); },
-    'verify-chain': () => { UI.chainResult = verifyChain(); audit('audit-chain-verify', { detail: UI.chainResult.ok ? 'intact' : 'broken' }); render(); },
-    'btg-review': (d) => { const g = S.btg.find((x) => x.id === d.g); g.reviewed = true; audit('btg-review', { patient: P(g.patient), detail: 'appropriate' }); save(); render(); },
+    'verify-chain': () => { if (LIVE) return liveVerify(); UI.chainResult = verifyChain(); audit('audit-chain-verify', { detail: UI.chainResult.ok ? 'intact' : 'broken' }); render(); },
+    'btg-review': (d) => { if (LIVE) return liveReview(d.g); const g = S.btg.find((x) => x.id === d.g); g.reviewed = true; audit('btg-review', { patient: P(g.patient), detail: 'appropriate' }); save(); render(); },
     suspend: (d) => { const x = U(d.u); x.status = 'suspended'; audit('user-suspend', { resource: x.id }); save(); render(); toast(`${x.name} suspended. Active sessions ended.`); },
     reactivate: (d) => { const x = U(d.u); x.status = 'active'; audit('user-reactivate', { resource: x.id }); save(); render(); },
     'role-change': (d) => { const x = U(d.u); openModal({ title: `Change role · ${x.name}`, form: 'role', submit: 'Request change', body: `<input type="hidden" name="u" value="${x.id}">
@@ -765,10 +772,11 @@
       if (u.status !== 'active') { audit('sign-in', { actor: u.id, role: u.role, outcome: 'denied', detail: 'account suspended' }); UI.msg = 'This account is suspended. Contact your administrator.'; render(); return; }
       UI.pending = u.id; UI.how = 'password'; UI.msg = ''; render();
     },
-    psearch(f) { UI.search = f.q || ''; render(); },
+    psearch(f) { UI.search = f.q || ''; render(); if (LIVE && UI.search.trim()) liveSearch(UI.search.trim()); },
     btg(f) {
+      if (LIVE) return liveBtg(f);
       const p = P(f.p), u = me();
-      if ((f.text || '').trim().length < 15) { toast('Add a clinical justification of at least 15 characters.'); return; }
+      if ((f.text || '').trim().length < 20) { toast('Add a clinical justification of at least 20 characters.'); return; }
       const g = { id: nid('BTG'), user: u.id, patient: p.id, reason: f.reason, text: f.text.trim(), at: new Date().toISOString(), expires: new Date(Date.now() + ((S.config && S.config.btgHours) || 4) * 3600e3).toISOString(), reviewed: false };
       S.btg.push(g); audit('break-the-glass', { patient: p, purpose: 'Emergency (break-the-glass)', detail: `${f.reason}: ${g.text}` }); save();
       toast(`Emergency access granted for ${(S.config && S.config.btgHours) || 4} hours. Privacy Office notified.`); render();
@@ -830,12 +838,176 @@
   }));
   setInterval(() => { if (session && Date.now() - session.last > IDLE_MS_FN()) signOut(`Your session locked after ${idleMin()} minutes of inactivity.`); }, 30000);
 
+
+  /* ---------------- live mode (Tessera API) ----------------
+     The census from /api/bootstrap replaces the synthetic patients. Synthetic records about anyone
+     outside it are dropped, so no screen can show a patient the server didn't permit. Opening a chart
+     fetches it again so the server records that view. Signing out clears it all from memory. */
+  let SEED0 = null; // pristine copy, taken at boot once every module has loaded
+  function liveRestoreSeed(ids) {
+    Object.keys(SEED0).forEach((k) => {
+      const v = SEED[k], o = clone(SEED0[k]);
+      if (k === 'patients') return;
+      if (Array.isArray(v)) v.splice(0, v.length, ...o.filter((x) => !x || typeof x !== 'object' || !('patient' in x) || ids.has(x.patient)));
+      else if (v && typeof v === 'object') { Object.keys(v).forEach((key) => delete v[key]); Object.keys(o).forEach((key) => { const m = /^(P\d+)\b/.exec(key); if (!m || ids.has(m[1])) v[key] = o[key]; }); }
+    });
+  }
+  const VITALS0 = { bp: '—', hr: null, rr: null, temp: null, spo2: null };
+  const livePatient = (p) => Object.assign({ allergies: [], problems: [], meds: [], labs: [], consults: [], phone: '', vitals: Object.assign({}, VITALS0), _stub: false }, p, p.vitals ? { vitals: Object.assign({}, VITALS0, p.vitals) } : {});
+  function liveForget() {
+    SEED.patients.length = 0;
+    liveRestoreSeed(new Set());
+    S = withModules(freshState());
+    UI.live = { stage: 'password' }; UI.liveChart = null; UI.liveAudit = null;
+  }
+  function liveLoad(d, how) {
+    const ids = new Set(d.patients.map((p) => p.id));
+    liveRestoreSeed(ids);
+    SEED.patients.splice(0, SEED.patients.length, ...d.patients.map(livePatient));
+    S = withModules(freshState());
+    S.config = Object.assign(S.config || {}, { idleMin: d.config.idleMinutes, btgHours: d.config.btgHours });
+    S.btg = (d.btg || []).map((g, i) => ({ id: 'BTG-L' + i, user: d.user.id, patient: g.patient_id, reason: g.reason, text: g.justification, at: g.granted_at, expires: g.expires_at, reviewed: false }));
+    let u = U(d.user.id);
+    if (!u) { u = { id: d.user.id }; S.users.push(u); }
+    const own = d.user.role === 'patient' ? SEED.patients.find((p) => p.id === d.user.patientId) : null;
+    Object.assign(u, { username: d.user.username, role: d.user.role, dept: d.user.dept, unit: d.user.unit, title: d.user.title || u.title, patientId: d.user.patientId, status: 'active', mfa: 'Authenticator app' }, { name: d.user.name || (own && own.name) || u.name });
+    session = { userId: u.id, at: Date.now(), last: Date.now() };
+    UI.live = { stage: 'in' }; UI.msg = ''; UI.liveChart = null;
+    audit('sign-in', { detail: how === 'resume' ? 'session resumed (API cookie)' : 'password + authenticator (API)' });
+    if (location.hash === '#home' || how === 'resume') render(); else location.hash = 'home';
+  }
+  async function liveBoot() {
+    SEED0 = clone(SEED); SEED.patients.length = 0;
+    S = withModules(freshState());
+    UI.live = { stage: 'loading' };
+    S = store.trackState(S); T.store = store; store.attach(T);
+    render();
+    const r = await store.api('GET', '/api/bootstrap');
+    if (r.ok) liveLoad(r.data, 'resume');
+    else { UI.live = { stage: 'password' }; UI.msg = r.status === 0 ? r.data.error : ''; render(); }
+  }
+  function liveExpired() { session = null; liveForget(); UI.msg = 'Your session ended on the server (signed out, idle timeout or expired). Sign in again.'; history.replaceState(null, '', location.pathname + location.search); render(); }
+  function viewLiveLogin() {
+    const st = (UI.live || {}).stage || 'loading';
+    const form = st === 'loading' ? '<p class="e-note">Connecting to the Tessera API…</p>'
+      : st === 'mfa' ? `<form data-form="live-mfa" class="e-pw" autocomplete="off">
+          <div class="field"><label for="lg-code">6-digit code from your authenticator app</label><input id="lg-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus></div>
+          <button class="btn primary" type="submit">Verify and sign in</button><button class="btn" type="button" data-act="live-restart">Start again</button></form>`
+      : `<form data-form="live-pw" class="e-pw" autocomplete="on">
+          <div class="field"><label for="lg-user">Username</label><input id="lg-user" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" value="${esc(UI.liveUser || '')}" required ${UI.liveUser ? '' : 'autofocus'}></div>
+          <div class="field"><label for="lg-pass">Password</label><input id="lg-pass" name="password" type="password" autocomplete="current-password" required ${UI.liveUser ? 'autofocus' : ''}></div>
+          <button class="btn primary" type="submit">Continue</button></form>`;
+    return `<div class="entry">
+      <div class="e-aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+      <header class="e-top"><div class="e-brand">${LOGO}<div><b>Tessera Health</b><small>${esc(SEED.org.name)}</small></div></div><span class="e-live"><i></i>Live</span></header>
+      <div class="e-body"><div class="e-panel" style="max-width:440px;margin:0 auto">
+        <div class="e-panel-head"><h2>${st === 'mfa' ? 'Confirm it’s you' : 'Sign in'}</h2><p>${st === 'mfa' ? 'Enter the code your authenticator app shows now. Codes change every 30 seconds.' : 'Password, then a code from your authenticator app. The session locks after ' + idleMin() + ' minutes idle.'}</p></div>
+        ${UI.msg ? `<div class="e-msg" role="alert">${esc(UI.msg)}</div>` : ''}
+        ${form}
+        <p class="e-note">Live mode · connected to ${esc(store.info.label.split('·')[0])}API · nothing about patients is stored on this device</p>
+      </div></div></div>`;
+  }
+  FORMS['live-pw'] = async (f) => {
+    UI.liveUser = f.username;
+    const r = await store.api('POST', '/api/auth/password', { username: f.username, password: f.password });
+    if (r.ok) { UI.live = { stage: 'mfa' }; UI.msg = ''; } else UI.msg = r.data.error || 'Sign-in failed.';
+    render();
+  };
+  FORMS['live-mfa'] = async (f) => {
+    const r = await store.api('POST', '/api/auth/mfa', { code: f.code });
+    if (r.status === 401 && /Start again/.test(r.data.error || '')) { UI.live = { stage: 'password' }; UI.msg = r.data.error; render(); return; }
+    if (!r.ok) { UI.msg = r.data.error || 'Sign-in failed.'; render(); return; }
+    const b = await store.api('GET', '/api/bootstrap');
+    if (!b.ok) { UI.live = { stage: 'password' }; UI.msg = b.data.error || 'Signed in, but the record list could not be loaded.'; render(); return; }
+    liveLoad(b.data, 'signin');
+  };
+  ACT['live-restart'] = () => { UI.live = { stage: 'password' }; UI.msg = ''; render(); };
+
+  function liveFetchChart(u, id) {
+    UI.liveChart = id; UI.liveChartState = 'loading';
+    store.api('GET', '/api/patients/' + encodeURIComponent(id)).then((r) => {
+      if (UI.liveChart !== id || !me()) return;
+      if (r.status === 401) return liveExpired();
+      const p = P(id);
+      if (r.ok) {
+        const np = livePatient(Object.assign({}, r.data.patient, { _access: r.data.access }));
+        if (p) { Object.keys(p).forEach((k) => { if (!(k in np)) delete p[k]; }); Object.assign(p, np); } else { S.extraPatients = S.extraPatients || []; S.extraPatients.push(np); }
+        UI.liveChartState = 'ok';
+      } else if (r.status === 403 && r.data.btg) {
+        if (p) p._access = 'none';
+        UI.liveChartState = p ? 'ok' : 'missing';
+      } else { UI.liveChartState = 'missing'; UI.liveChartErr = r.data.error; }
+      render();
+    });
+  }
+  const viewPatientDemo = VIEWS.patient;
+  VIEWS.patient = (u, args) => {
+    if (!LIVE || u.role === 'patient') return viewPatientDemo(u, args);
+    const id = args[0];
+    if (UI.liveChart !== id) liveFetchChart(u, id); // each time a chart is opened, so the server records the view
+    if (UI.liveChartState === 'loading') return { title: 'Opening chart', sub: 'Fetching from the Tessera API · every view is logged', body: '<div class="banner info"><p>Loading the record…</p></div>' };
+    if (UI.liveChartState === 'missing') return viewDenied(u, 'this record');
+    return viewPatientDemo(u, args);
+  };
+  const viewAuditDemo = VIEWS.audit;
+  VIEWS.audit = (u, args) => {
+    if (LIVE && !UI.liveAudit) {
+      UI.liveAudit = { events: [], grants: [] };
+      Promise.all([store.api('GET', '/api/audit?limit=300'), store.api('GET', '/api/btg')]).then(([a, b]) => {
+        if (a.status === 401) return liveExpired();
+        UI.liveAudit = {
+          events: (a.data.events || []).slice().reverse().map((e) => ({ seq: e.seq, ts: e.ts, actor: e.actor, role: e.role, action: e.action, resource: e.resource, detail: e.detail, patient: e.patient_token, outcome: e.outcome })),
+          grants: (b.data.grants || []).map((g) => ({ id: g.id, user: g.user_id, patient: g.patient_id, token: g.token, reason: g.reason, text: g.justification, at: g.granted_at, reviewed: !!g.reviewed_at, own: g.user_id === u.id }))
+        };
+        render();
+      });
+    }
+    const v = viewAuditDemo(u, args);
+    if (LIVE) v.sub = 'From the Tessera API · append-only · hash-chained in the database · this view is logged';
+    return v;
+  };
+  T.after.push((u, route) => { if (!LIVE) return; if (route !== 'patient') UI.liveChart = null; if (route !== 'audit') UI.liveAudit = null; });
+  async function liveVerify() {
+    const r = await store.api('GET', '/api/audit/verify');
+    UI.chainResult = r.ok ? { ok: r.data.ok, n: r.data.checked, at: r.data.broken_at } : { ok: false, at: '?' };
+    render();
+  }
+  async function liveReview(id) {
+    const r = await store.api('POST', `/api/btg/${encodeURIComponent(id)}/review`, { outcome: 'appropriate' });
+    toast(r.ok ? 'Review recorded.' : r.data.error || 'Could not record the review.');
+    UI.liveAudit = null; render();
+  }
+  async function liveBtg(f) {
+    const r = await store.api('POST', `/api/patients/${encodeURIComponent(f.p)}/btg`, { reason: f.reason, justification: (f.text || '').trim() });
+    if (r.status === 401) return liveExpired();
+    if (!r.ok) { toast(r.data.error || 'Emergency access was not granted.'); return; }
+    S.btg.push({ id: 'BTG-' + r.data.grant, user: me().id, patient: f.p, reason: f.reason, text: f.text.trim(), at: new Date().toISOString(), expires: r.data.expires, reviewed: false });
+    audit('break-the-glass', { patient: P(f.p), purpose: 'Emergency (break-the-glass)', detail: `${f.reason} (API grant ${r.data.grant})` });
+    toast(`Emergency access granted for ${S.config.btgHours} hours. Privacy Office notified.`);
+    UI.liveChart = null; render(); // refetch: the server now opens the chart under the grant
+  }
+  async function liveSearch(q) {
+    const u = me(); if (!u || !['doctor', 'nurse'].includes(u.role)) return;
+    const r = await store.api('GET', '/api/search?q=' + encodeURIComponent(q));
+    if (r.status === 401) return liveExpired();
+    if (!r.ok) return;
+    S.extraPatients = S.extraPatients || [];
+    r.data.matches.forEach((m) => {
+      if (SEED.patients.some((p) => p.id === m.id)) return; // already in the census
+      const ex = S.extraPatients.find((p) => p.id === m.id);
+      if (ex) { ex._match = q.toLowerCase(); return; }
+      S.extraPatients.push(livePatient({ id: m.id, token: m.token, age: m.age, sex: m.sex, dept: m.dept, unit: m.unit, name: 'Restricted record', mrn: '—', status: '—', code: 'Full code', _access: 'none', _stub: true, _match: q.toLowerCase() }));
+    });
+    if (UI.search.trim().toLowerCase() === q.toLowerCase()) render();
+  }
+
   Object.assign(T, { verifyChain, marState: (m, t) => marState(m, t), VIEWS, ACT, FORMS, CHART, allPts, esc, clone, P, U, me, nid, tok, fnv, pill, statePill, allergyChips, phoneCell, tiles, panel, table, money, dayStr, ago, timeStr, toMin, nowMin, initials, toast, audit, careRel, chartAccess, btgActive, myPatients, openModal, render, save, DEPT, UNIT, ROLE_LABEL, location_, purposeOf, maskId, cds, counts: {} });
   Object.defineProperty(T, 'S', { get: () => S });
   T.patchPatient = (id, fields) => { if (store.tracing) store.note('patients', 'w'); const p = P(id); Object.assign(p, fields); S.patientPatches = S.patientPatches || {}; S.patientPatches[id] = Object.assign(S.patientPatches[id] || {}, fields); save(); };
   T.iso = (minsAgo) => new Date(Date.now() - minsAgo * 60000).toISOString();
   T.navFor = navFor;
   T.boot = function () {
+    if (LIVE) return liveBoot();
     S = store.loadState();
     S = (!S || !Array.isArray(S.audit)) ? freshState() : S;
     if (!S.appts) S.appts = clone(SEED.appointments);
