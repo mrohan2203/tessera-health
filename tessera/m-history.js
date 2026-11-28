@@ -19,6 +19,7 @@
   const refRange = (ref) => { const s = String(ref || ''); let m = s.match(/([\d.]+)\s*[–-]\s*([\d.]+)/); if (m) return [+m[1], +m[2]]; m = s.match(/^<\s*([\d.]+)/); if (m) return [null, +m[1]]; m = s.match(/^>\s*([\d.]+)/); if (m) return [+m[1], null]; return [null, null]; };
   const flagFor = (v, ref) => { const [lo, hi] = refRange(ref); if (hi != null && v > hi) return v > hi * 1.15 ? 'HH' : 'H'; if (lo != null && v < lo) return v < lo * 0.85 ? 'LL' : 'L'; return ''; };
 
+  T.inits.push((s) => { if (!s.vitalsLog) s.vitalsLog = {}; });
   /* Original seed vitals, captured before any session edits, anchor the synthetic flowsheet. */
   const ORIG = {};
   (T.SEED.patients || []).forEach((p) => { ORIG[p.id] = JSON.parse(JSON.stringify(p.vitals || {})); });
@@ -110,7 +111,7 @@
     return pts;
   }
   function logVitals(p, v, src, by) {
-    const st = S(); st.vitalsLog = st.vitalsLog || {}; (st.vitalsLog[p.id] = st.vitalsLog[p.id] || []).push(Object.assign({ at: Date.now(), by: by || (T.me() || {}).name, src: src || 'Flowsheet' }, v));
+    const st = S(); (st.vitalsLog[p.id] = st.vitalsLog[p.id] || []).push(Object.assign({ at: Date.now(), by: by || (T.me() || {}).name, src: src || 'Flowsheet' }, v));
   }
 
   /* ---------- Drawing ---------- */

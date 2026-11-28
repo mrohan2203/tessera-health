@@ -17,7 +17,8 @@
   const lab = (p, re) => p.labs.find((l) => re.test(l.test));
   const has = (p, re) => p.problems.some((x) => re.test(x));
   const me = () => T.me() || {};
-  const events = () => { const st = S(); st.rrEvents = st.rrEvents || []; return st.rrEvents; };
+  T.inits.push((s) => { if (!s.rrEvents) s.rrEvents = []; }); // module state, created once at boot
+  const events = () => S().rrEvents;
   const activeFor = (pid) => events().find((e) => e.patient === pid && e.status === 'active');
   const clinical = (u) => u && (u.role === 'doctor' || u.role === 'nurse');
   const mmss = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };

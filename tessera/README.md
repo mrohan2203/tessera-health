@@ -107,11 +107,11 @@ Two suites run in the browser against the local server (http://localhost:8765). 
 ```js
 // 1. Sweep: every account, every page, every button, every form and dialog
 await import('/tests/sweep.js?' + Date.now()).then((m) => m.run())
-// 2. Use cases: 72 real workflows across all roles, each with an expected outcome
+// 2. Use cases: 73 real workflows across all roles, each with an expected outcome
 await import('/tests/usecases.js?' + Date.now()).then((m) => m.run())
 ```
 
-Last run: sweep 226 pages, 932 actions, 161 forms, 48 dialogs, 0 issues (desktop); use cases 72/72 passed.
+Last run: sweep 226 pages, 932 actions, 161 forms, 48 dialogs, 0 issues (desktop); use cases 73/73 passed.
 
 ## Files
 

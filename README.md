@@ -71,9 +71,13 @@ Two browser-run suites cover the app. Run them in the browser console at http://
 **Reset demo data**:
 
 ```js
-await import('/tests/usecases.js?' + Date.now()).then((m) => m.run())   // 72 end-to-end workflows
+await import('/tests/usecases.js?' + Date.now()).then((m) => m.run())   // 73 end-to-end workflows
 await import('/tests/sweep.js?' + Date.now()).then((m) => m.run())      // every page, action, form and dialog
 ```
+
+## Toward a real backend
+
+The security rules are enforced in the browser today, which is fine for a pitch but not for real patients. [`backend/README.md`](backend/README.md) has the plan for moving them to a server, in five phases. Phase 1 is done: every persisted read and write now goes through one data layer ([`tessera/store.js`](tessera/store.js)) with a demo adapter (today's behaviour) and a live-adapter contract. [`backend/data-access-map.md`](backend/data-access-map.md) lists each data collection with the screens that read and write it.
 
 ## Credits
 

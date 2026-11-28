@@ -96,7 +96,10 @@
   }
 
   /* ---------- Plan state ---------- */
-  const plan = (pid) => { const st = S(); st.carePlans = st.carePlans || {}; return st.carePlans[pid] || (st.carePlans[pid] = { goals: [], tasks: [], meds: [], dismissed: [], log: [] }); };
+  T.inits.push((s) => { if (!s.carePlans) s.carePlans = {}; });
+  const EMPTY = () => ({ goals: [], tasks: [], meds: [], dismissed: [], log: [] });
+  const peek = (pid) => S().carePlans[pid] || EMPTY(); // read-only: viewing a chart never creates a plan
+  const plan = (pid) => { const st = S(); return st.carePlans[pid] || (st.carePlans[pid] = { goals: [], tasks: [], meds: [], dismissed: [], log: [] }); };
   const pending = (p, pl) => { const s = suggest(p), taken = new Set(pl.goals.concat(pl.tasks, pl.meds).map((x) => x.sid).concat(pl.dismissed)); return { goals: s.goals.filter((x) => !taken.has(x.sid)), tasks: s.tasks.filter((x) => !taken.has(x.sid)), meds: s.meds.filter((x) => !taken.has(x.sid)) }; };
   function goalStatus(p, g) {
     if (!g.metric) return { st: 'open', label: 'In progress' };
@@ -149,7 +152,7 @@
   const ST_PILL = { met: 'ok', improving: 'info', worse: 'crit', notmet: 'warn', nodata: '', open: '' };
   const CHECK_PILL = { ok: ['ok', 'Safe to order'], caution: ['warn', 'Caution'], block: ['crit', 'Blocked'] };
   CHART.careplan = function (u, p) {
-    const pl = plan(p.id); sweep(p, pl);
+    const pl = peek(p.id); if (S().carePlans[p.id]) sweep(p, pl);
     const canEdit = u.role === 'doctor' || u.role === 'nurse', isDoc = u.role === 'doctor', mine = ROLE_OWNER[u.role];
     const sug = pending(p, pl);
     const goals = pl.goals.map((g) => Object.assign({ g }, goalStatus(p, g)));

@@ -1,12 +1,13 @@
 /* Tessera Health — pitch prototype. Vanilla JS, hash routing, no backend.
-   State lives in localStorage (per browser). Not real-time by design. */
+   State is read and written through window.TesseraStore (store.js): the demo adapter keeps it in
+   this browser's storage; a live adapter will use the API. Not real-time by design. */
 (function () {
   'use strict';
   const SEED = window.TESSERA_SEED;
   const $ = (s) => document.querySelector(s);
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const clone = (o) => JSON.parse(JSON.stringify(o));
-  const LS = 'tessera-state-v2', SK = 'tessera-session-v2';
+  const store = window.TesseraStore;
   const idleMin = () => (S && S.config && S.config.idleMin) || 15;
   const IDLE_MS_FN = () => idleMin() * 60 * 1000;
   const DEPT = SEED.departments, UNIT = SEED.units;
@@ -22,17 +23,17 @@
   const T = window.Tessera = { SEED, VIEWS: null, ACT: null, FORMS: null, CHART: null, HOME: {}, inits: [], after: [] };
   function withModules(s) { T.inits.forEach((fn) => fn(s)); return s; }
   let S = null; // created in boot(), after modules have registered their state
-  const save = () => { try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) { /* storage unavailable: demo still works in memory */ } };
+  const save = () => store.saveState(S);
 
   let session = null;
-  try { session = JSON.parse(sessionStorage.getItem(SK)); } catch (e) { session = null; }
-  const saveSession = () => { try { session ? sessionStorage.setItem(SK, JSON.stringify(session)) : sessionStorage.removeItem(SK); } catch (e) { /* ignore */ } };
+  session = store.loadSession();
+  const saveSession = () => store.saveSession(session);
 
   const UI = T.UI = { revealed: new Set(), pending: null, msg: '', modal: null, scan: null, marPatient: null, selClaim: null, search: '', auditFilter: { q: '', btg: false }, identified: null, addendumFor: null, chainResult: null };
 
   /* ---------------- helpers ---------------- */
   const allPts = () => SEED.patients.concat((S && S.extraPatients) || []);
-  const P = (id) => allPts().find((p) => p.id === id);
+  const P = (id) => { if (store.tracing) store.note('patients', 'r'); return allPts().find((p) => p.id === id); };
   const U = (id) => S.users.find((u) => u.id === id);
   const me = () => (session ? U(session.userId) : null);
   const nid = (prefix) => prefix + '-' + (++S.seq);
@@ -74,7 +75,7 @@
       facility: SEED.org.facility, prev
     };
     ev.hash = fnv(prev + JSON.stringify(ev));
-    S.audit.push(ev); save();
+    store.appendAudit(ev, S);
   }
   function verifyChain() {
     let prev = '00000000';
@@ -680,7 +681,7 @@
   /* ---------------- actions ---------------- */
   const ACT = {
     go: (d) => { location.hash = d.href.slice(1); },
-    reset: () => { S = withModules(freshState()); save(); try { sessionStorage.setItem('tessera-flash', 'Demo data reset.'); } catch (e) { /* ignore */ } location.reload(); },
+    reset: () => { S = withModules(freshState()); save(); store.flash.set('Demo data reset.'); location.reload(); },
     demo: (d) => {
       const u = U(d.u);
       if (u.status !== 'active') { audit('sign-in', { actor: u.id, role: u.role, outcome: 'denied', detail: 'account suspended' }); UI.msg = `${u.name}'s account is suspended. Sign-in blocked and logged.`; render(); return; }
@@ -831,17 +832,18 @@
 
   Object.assign(T, { verifyChain, marState: (m, t) => marState(m, t), VIEWS, ACT, FORMS, CHART, allPts, esc, clone, P, U, me, nid, tok, fnv, pill, statePill, allergyChips, phoneCell, tiles, panel, table, money, dayStr, ago, timeStr, toMin, nowMin, initials, toast, audit, careRel, chartAccess, btgActive, myPatients, openModal, render, save, DEPT, UNIT, ROLE_LABEL, location_, purposeOf, maskId, cds, counts: {} });
   Object.defineProperty(T, 'S', { get: () => S });
-  T.patchPatient = (id, fields) => { const p = P(id); Object.assign(p, fields); S.patientPatches = S.patientPatches || {}; S.patientPatches[id] = Object.assign(S.patientPatches[id] || {}, fields); save(); };
+  T.patchPatient = (id, fields) => { if (store.tracing) store.note('patients', 'w'); const p = P(id); Object.assign(p, fields); S.patientPatches = S.patientPatches || {}; S.patientPatches[id] = Object.assign(S.patientPatches[id] || {}, fields); save(); };
   T.iso = (minsAgo) => new Date(Date.now() - minsAgo * 60000).toISOString();
   T.navFor = navFor;
   T.boot = function () {
-    try { S = JSON.parse(localStorage.getItem(LS)); } catch (e) { S = null; }
+    S = store.loadState();
     S = (!S || !Array.isArray(S.audit)) ? freshState() : S;
     if (!S.appts) S.appts = clone(SEED.appointments);
     withModules(S); // fills any module state missing from a saved session
     Object.entries(S.patientPatches || {}).forEach(([id, f]) => { const p = P(id); if (p) Object.assign(p, f); });
     if (session && (!me() || Date.now() - session.last > IDLE_MS_FN())) { session = null; saveSession(); }
-    try { const f = sessionStorage.getItem('tessera-flash'); if (f) { UI.msg = f; sessionStorage.removeItem('tessera-flash'); } } catch (e) { /* ignore */ }
+    const f = store.flash.get(); if (f) UI.msg = f; else if (store.notice) UI.msg = store.notice;
+    S = store.trackState(S); T.store = store; store.attach(T);
     render();
   };
 })();
