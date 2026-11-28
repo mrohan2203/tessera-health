@@ -16,6 +16,8 @@ import { COLLS, ARRAY_COLLS, readable, check, RuleError, type Coll } from './rec
 import { encField, newDek, patientToken } from './crypto.ts';
 import { POLICY, ORG_ROLES, project, projectItem } from './policy.ts';
 import { relationsFor } from './care.ts';
+import { FHIR_TYPES, capability, patient, resourcesFor, bundle, outcome, allows } from './fhir.ts';
+import { analyse } from './sentinel.ts';
 import { readFileSync } from 'node:fs';
 const UNIT_GROUPS: Record<string, string[]> = JSON.parse(readFileSync(new URL('../seed/initial-state.json', import.meta.url), 'utf8')).unitGroups || {};
 
@@ -35,6 +37,12 @@ export function build() {
       .header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'").header('Cross-Origin-Resource-Policy', 'same-site');
     if (env.PRODUCTION) reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     const origin = req.headers.origin;
+    if (req.url.startsWith('/fhir/')) { // token API for outside apps: any origin, no cookies across sites, read-only
+      reply.header('Access-Control-Allow-Origin', '*').header('Access-Control-Allow-Headers', 'Authorization').header('Access-Control-Allow-Methods', 'GET');
+      if (req.method === 'OPTIONS') return reply.code(204).send();
+      if (req.method !== 'GET') return reply.code(405).send({ resourceType: 'OperationOutcome', issue: [{ severity: 'error', code: 'not-supported', diagnostics: 'Read-only API' }] });
+      return;
+    }
     if (origin === env.APP_ORIGIN) reply.header('Access-Control-Allow-Origin', origin).header('Access-Control-Allow-Credentials', 'true').header('Vary', 'Origin');
     if (req.method === 'OPTIONS') { reply.header('Access-Control-Allow-Methods', 'GET, POST').header('Access-Control-Allow-Headers', 'Content-Type, X-Tessera').header('Access-Control-Max-Age', '600'); return reply.code(204).send(); }
     if (req.method !== 'GET' && req.headers['x-tessera'] !== '1') return reply.code(403).send({ error: 'missing X-Tessera header' });
@@ -132,11 +140,11 @@ export function build() {
     return opsDek!;
   };
   const emptyRecords = () => { const r: any = {}; COLLS.forEach((k) => { r[k] = POLICY[k].scalar ? null : ARRAY_COLLS.has(k) ? [] : {}; }); return r; };
-  async function loadRecords(c: any, s: any, pids: string[], withOps = true) {
+  async function loadRecords(c: any, s: any, pids: string[], withOps = true, since: Date | null = null) {
     const role = s.role;
     const out: any = { records: emptyRecords(), versions: {} };
     if (pids.length) {
-      const { rows } = await c.query('select r.coll, r.key, r.patient_id, r.version, r.body_enc, p.dek_wrapped from app.records r join app.patients p on p.id = r.patient_id where r.patient_id = any($1) order by r.ord', [pids]);
+      const { rows } = await c.query('select r.coll, r.key, r.patient_id, r.version, r.body_enc, p.dek_wrapped from app.records r join app.patients p on p.id = r.patient_id where r.patient_id = any($1) and ($2::timestamptz is null or r.updated_at > $2) order by r.ord', [pids, since]);
       const deks = new Map<string, Buffer>();
       for (const r of rows) {
         if (!POLICY[r.coll]) continue;
@@ -150,7 +158,7 @@ export function build() {
     }
     if (withOps) {
       const dek = await orgKey(c);
-      const { rows } = await c.query('select coll, key, version, body_enc from app.ops order by ord');
+      const { rows } = await c.query('select coll, key, version, body_enc from app.ops where ($1::timestamptz is null or updated_at > $1) order by ord', [since]);
       for (const r of rows) {
         const pol = POLICY[r.coll]; if (!pol || !pol.read.includes(role)) continue;
         if (pol.perUser && r.key !== s.id) continue;
@@ -211,6 +219,7 @@ export function build() {
       const g = await c.query(`insert into app.btg_grants (user_id, patient_id, reason, justification, expires_at) values ($1,$2,$3,$4, now() + make_interval(hours => $5)) returning id, expires_at`, [s.id, pid, String(reason).slice(0, 80), String(justification).slice(0, 1000), env.BTG_HOURS]);
       const tokRow = await c.query('select token from app.patients where id = $1', [pid]); // visible now: the grant is in this transaction
       audit({ action: 'break-the-glass', resource: pid, patient_token: tokRow.rows[0]?.token || '', purpose: 'Emergency (break-the-glass)', detail: `${reason}: ${String(justification).slice(0, 200)} · grant ${g.rows[0].id} until ${new Date(g.rows[0].expires_at).toISOString()}` });
+      await outbox(c, 'email', null, 'admin', 'Break-the-glass access to review', `Emergency access to ${tokRow.rows[0]?.token || 'a record'} was used and needs review. Open Tessera, Audit log.`);
       return { grant: g.rows[0].id, expires: g.rows[0].expires_at };
     });
   });
@@ -266,7 +275,8 @@ export function build() {
     const censusRole = CHART_ROLES.has(s.role) || s.role === 'patient' || ORG_ROLES.includes(s.role);
     return withAudit(actor(s), req.ip, async (c, audit) => {
       const users = await directory(c);
-      if (!censusRole) { const recs = await loadRecords(c, s, []); return { user: publicUser(s), users, patients: [], btg: [], config: cfg, ...recs }; }
+      const now = (await c.query('select now() as n')).rows[0].n; // the changes feed starts here
+      if (!censusRole) { const recs = await loadRecords(c, s, []); return { now, user: publicUser(s), users, patients: [], btg: [], config: cfg, ...recs }; }
       const { rows } = await c.query('select * from app.patients order by id');
       const rel = CHART_ROLES.has(s.role) ? (await c.query('select patient_id, string_agg(kind, \',\') as kinds from app.care_relationships where user_id = $1 group by patient_id', [s.id])).rows : [];
       const btg = BTG_ROLES.has(s.role) ? (await c.query('select patient_id, reason, justification, granted_at, expires_at from app.btg_grants where user_id = $1 and expires_at > now()', [s.id])).rows : [];
@@ -281,7 +291,7 @@ export function build() {
         return p;
       });
       const recs = await loadRecords(c, s, patients.map((p: any) => p.id));
-      return { user: publicUser(s), users, patients, btg, config: cfg, ...recs };
+      return { now, user: publicUser(s), users, patients, btg, config: cfg, ...recs };
     });
   });
 
@@ -426,6 +436,7 @@ export function build() {
         }
       }
       if ((coll === 'er' || coll === 'ot') && !cur) extra += ` · care relationships now ${await recomputeCare(c, pid, pr)}`;
+      await notify(c, coll, old, next, pr.token);
       const version = (cur ? cur.version : 0) + 1;
       audit({ action: `write-${coll}`, resource: key, patient_token: pr.token, purpose: PURPOSE[s.role] || 'Operations', detail: (cur ? `updated to v${version}` : 'created') + extra });
       return { ...base, ok: true, version };
@@ -461,6 +472,7 @@ export function build() {
         for (const pt of (await c.query('select * from app.patients_routing()')).rows) for (const r of relationsFor(u, pt, { unitGroups: UNIT_GROUPS, onEr: pt.on_er, inOt: pt.in_ot })) { await c.query('insert into app.care_relationships values ($1,$2,$3) on conflict do nothing', [r.user, pt.id, r.kind]); n++; }
         extra = ` · ${old.user} is now ${role}${sc ? ' ' + sc : ''}; ${n} care relationships; their sessions ended`;
       }
+      await notify(c, coll, old, w.body, '');
       const version = (cur ? cur.version : 0) + 1;
       audit({ action: `write-${coll}`, resource: key, purpose: 'Operations', detail: (cur ? `updated to v${version}` : 'created') + extra });
       return { ...base, ok: true, version };
@@ -487,6 +499,166 @@ export function build() {
       return { ...base, ok: true, version: 0 };
     });
   }
+
+  /* ---------- outbound messages (Phase 4b) ----------
+     Pager, email and SMS leave the hospital, so they are built only from tokens and fixed text: never
+     a name, MRN or clinical value. A test scans every message. Delivery is a separate worker. */
+  async function outbox(c: any, channel: string, toUser: string | null, toRole: string | null, subject: string, body: string) {
+    await c.query('insert into app.outbox (channel, to_user, to_role, subject, body) values ($1,$2,$3,$4,$5)', [channel, toUser, toRole, subject, body]);
+  }
+  async function notify(c: any, coll: string, old: any, next: any, token: string) {
+    if (coll === 'labOrders' && next.status === 'Released' && !(old && old.status === 'Released') && String(next.flag || '').length > 1)
+      await outbox(c, 'pager', next.by || null, null, 'Critical lab result', `Critical result for ${token}. Open Tessera, Critical results. Reply is not monitored.`);
+    if (coll === 'results' && !old) await outbox(c, 'pager', next.to || null, next.to ? null : 'doctor', 'Critical result', `Critical result for ${token} needs acknowledgement. Open Tessera.`);
+    if (coll === 'bedRequests' && !old) await outbox(c, 'pager', null, 'receptionist', 'Bed request', `An admission is waiting for a bed in ${String(next.unit || '').slice(0, 12)}. Open Tessera, Bed board.`);
+    if (coll === 'roleRequests' && !old) await outbox(c, 'email', null, 'admin', 'Role change to approve', 'A role change is waiting for a second administrator. Open Tessera, Users and roles.');
+    if (coll === 'supportReq' && !old) await outbox(c, 'email', null, 'admin', 'Support access request', 'The platform team asked for temporary support access. Open Tessera to approve or decline.');
+    if (coll === 'appts' && !old) await outbox(c, 'sms', null, `patient:${token}`, 'Appointment reminder', 'You have an upcoming visit at Bayview. Reply C to confirm or call (415) 555-0100.');
+  }
+  app.get('/api/outbox', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    if (s.role !== 'admin') return reply.code(403).send({ error: 'Not permitted.' });
+    return withAudit(actor(s), req.ip, async (c, audit) => { const { rows } = await c.query('select * from app.outbox order by id desc limit 200'); audit({ action: 'view-outbox', detail: `${rows.length} messages` }); return { messages: rows }; });
+  });
+
+  /* ---------- changes feed (Phase 4b) ----------
+     What changed since a moment, for this caller only (row-level security, policy and projection as
+     for the census). The app polls it so one person's work reaches everyone else's screen. */
+  app.get('/api/changes', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    const since = new Date(String(req.query.since || ''));
+    if (isNaN(+since)) return reply.code(400).send({ error: 'since must be a timestamp' });
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const now = (await c.query('select now() as n')).rows[0].n;
+      const census = CHART_ROLES.has(s.role) || s.role === 'patient' || ORG_ROLES.includes(s.role);
+      const pids = census ? (await c.query('select id, token from app.patients')).rows : [];
+      const recs = await loadRecords(c, s, pids.map((p: any) => p.id), true, since);
+      const touched = new Set<string>();
+      for (const [coll, v] of Object.entries(recs.records)) { if (!POLICY[coll] || !POLICY[coll].pt) continue; for (const x of (Array.isArray(v) ? v : Object.entries(v as any).map(([k, b]) => ({ ...(b as any), _key: k })))) { const pid = (x as any).patient || ((x as any)._key || '').split('|')[0]; if (pid) touched.add(pid); } }
+      const toks = pids.filter((p: any) => touched.has(p.id)).map((p: any) => p.token);
+      if (toks.length) audit({ action: 'sync', resource: 'changes feed', patient_token: toks.join(' '), purpose: PURPOSE[s.role] || 'Operations', detail: `${Object.keys(recs.versions).length} records changed` });
+      return { now, ...recs };
+    });
+  });
+
+  /* ---------- FHIR R4 read API (Phase 4b) ----------
+     Two ways in: the Tessera session cookie, or a Bearer token for an app the administrator approved,
+     issued when a signed-in user authorises it (POST /api/fhir/authorize). A token acts as that user:
+     the same role, care relationships, row-level security and projection, narrowed further by the
+     app's scopes. Revoking the app in Hospital configuration kills its tokens. Every read is audited. */
+  const FHIR_BASE = `http://localhost:${env.API_PORT}/fhir/r4`;
+  const interopApps = async (c: any) => { const k = await orgKey(c); const r = (await c.query("select body_enc from app.ops where coll = 'interop' and key = 'apps'")).rows[0]; return r ? decJson(k, r.body_enc) || [] : []; };
+  app.post('/api/fhir/authorize', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    const appId = String((req.body || {}).app || '');
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const a = (await interopApps(c)).find((x: any) => x.id === appId);
+      if (!a || !/^Approved/.test(a.status)) { audit({ action: 'fhir-authorize', resource: appId, outcome: 'denied', detail: a ? `app ${a.status}` : 'unknown app' }); reply.code(403); return { error: 'That app is not approved for this hospital.' }; }
+      const patientApp = /^patient\//.test(a.scopes);
+      if (patientApp ? s.role !== 'patient' : !CHART_ROLES.has(s.role)) { audit({ action: 'fhir-authorize', resource: a.name, outcome: 'denied', detail: `role ${s.role}` }); reply.code(403); return { error: patientApp ? 'Only the patient can connect this app.' : 'Your role cannot connect clinical apps.' }; }
+      const token = newSessionToken();
+      await c.query("insert into app.fhir_tokens (token_hash, app_id, user_id, scopes, expires_at) values ($1,$2,$3,$4, now() + interval '1 hour')", [sessionHash(token), a.id, s.id, a.scopes]);
+      audit({ action: 'fhir-authorize', resource: a.name, purpose: PURPOSE[s.role], detail: `scopes ${a.scopes}` });
+      return { access_token: token, token_type: 'Bearer', expires_in: 3600, scope: a.scopes, ...(patientApp ? { patient: s.patient_id } : {}), fhir_base: FHIR_BASE };
+    });
+  });
+  async function fhirCaller(req: any, reply: any) {
+    const h = String(req.headers.authorization || '');
+    const fail = (code: number, text: string) => { reply.code(code).header('Content-Type', 'application/fhir+json'); reply.send(outcome(code === 401 ? 'login' : 'forbidden', text)); return null; };
+    if (/^Bearer\s+/i.test(h)) {
+      const t = (await appPool.query(`select t.*, u.role, u.name, u.username, u.dept, u.unit, u.title, u.patient_id, u.status from app.fhir_tokens t join app.users u on u.id = t.user_id where t.token_hash = $1`, [sessionHash(h.replace(/^Bearer\s+/i, ''))])).rows[0];
+      if (!t || t.revoked_at || new Date(t.expires_at) < new Date() || t.status !== 'active') return fail(401, 'Token is invalid, expired or revoked.');
+      const c = await appPool.connect();
+      try { const a = (await interopApps(c)).find((x: any) => x.id === t.app_id); if (!a || !/^Approved/.test(a.status)) return fail(401, 'This app was revoked; its tokens no longer work.'); return { s: { id: t.user_id, role: t.role, patient_id: t.patient_id, name: t.name }, scopes: t.scopes, app: a.name }; }
+      finally { c.release(); }
+    }
+    const s = await session(req, 'active');
+    if (!s) return fail(401, 'Sign in, or send a Bearer token from POST /api/fhir/authorize.');
+    if (!CHART_ROLES.has(s.role) && s.role !== 'patient') return fail(403, 'Your role has no FHIR access.');
+    return { s, scopes: s.role === 'patient' ? 'patient/*.read' : 'user/*.read', app: 'Tessera app' };
+  }
+  const fhirSend = (reply: any, body: any, code = 200) => reply.code(code).header('Content-Type', 'application/fhir+json').send(body);
+  async function fhirPatient(c: any, k: any, pid: string) {
+    const row = (await c.query('select * from app.patients where id = $1', [pid])).rows[0]; // row-level security
+    if (!row) return null;
+    let p = decode(row, true);
+    const patch = (await loadRecords(c, k.s, [pid], false)).records.patientPatches[pid]; if (patch) p = { ...p, ...patch };
+    if (k.s.role === 'pharmacist') p = projectPharm(p);
+    return { row, p };
+  }
+  app.get('/fhir/r4/metadata', async (_req, reply) => fhirSend(reply, capability(FHIR_BASE)));
+  app.get('/fhir/r4/:type/:id', async (req: any, reply) => {
+    const k = await fhirCaller(req, reply); if (!k) return;
+    if (req.params.type !== 'Patient') return fhirSend(reply, outcome('not-supported', 'Read by id is supported for Patient; search other types with ?patient='), 400);
+    if (!allows(k.scopes, 'Patient')) return fhirSend(reply, outcome('forbidden', 'Scope does not include Patient.'), 403);
+    if (k.s.role === 'patient' && req.params.id !== k.s.patient_id) return fhirSend(reply, outcome('forbidden', 'Patient apps can read only that patient.'), 403);
+    const out = await withAudit(actor(k.s), req.ip, async (c, audit) => {
+      const r = await fhirPatient(c, k, String(req.params.id));
+      if (!r) { audit({ action: 'fhir-read', resource: `Patient/${req.params.id}`, outcome: 'denied', detail: `${k.app}: no access` }); return [403, outcome('forbidden', 'Not available.')] as [number, any]; }
+      audit({ action: 'fhir-read', resource: 'Patient', patient_token: r.row.token, purpose: PURPOSE[k.s.role], detail: k.app });
+      return [200, patient(r.p)] as [number, any];
+    });
+    return fhirSend(reply, out[1], out[0]); // sent only after the audit row is committed
+  });
+  app.get('/fhir/r4/:type', async (req: any, reply) => {
+    const k = await fhirCaller(req, reply); if (!k) return;
+    const type = String(req.params.type);
+    if (!(FHIR_TYPES as readonly string[]).includes(type)) return fhirSend(reply, outcome('not-supported', `${type} is not supported.`), 404);
+    if (!allows(k.scopes, type)) return fhirSend(reply, outcome('forbidden', `Scope does not include ${type}.`), 403);
+    const out = await withAudit(actor(k.s), req.ip, async (c, audit) => {
+      let pid = String(req.query.patient || '').replace(/^Patient\//, '');
+      if (type === 'Patient') {
+        const ident = String(req.query.identifier || '').replace(/^urn:tessera:mrn\|/, '');
+        if (!ident && !pid) return [400, outcome('required', 'Search Patient by identifier.')] as [number, any];
+        if (ident) { const m = (await c.query('select id from app.patients_directory($1)', [blindIndex(ident)])).rows[0]; pid = m ? m.id : ''; }
+      } else if (!pid) return [400, outcome('required', 'Search needs ?patient=')] as [number, any];
+      if (k.s.role === 'patient' && pid && pid !== k.s.patient_id) return [403, outcome('forbidden', 'Patient apps can read only that patient.')] as [number, any];
+      const r = pid ? await fhirPatient(c, k, pid) : null;
+      if (!r) { if (pid) audit({ action: 'fhir-read', resource: `${type}?patient=${pid}`, outcome: 'denied', detail: `${k.app}: no access` }); return [200, bundle(FHIR_BASE, [])] as [number, any]; }
+      const recs = (await loadRecords(c, k.s, [pid], false)).records;
+      const list = type === 'Patient' ? [patient(r.p)] : resourcesFor(r.p, recs, new Set([type]), req.query.category ? String(req.query.category) : undefined);
+      audit({ action: 'fhir-read', resource: type, patient_token: r.row.token, purpose: PURPOSE[k.s.role], detail: `${k.app}: ${list.length} resource(s)` });
+      return [200, bundle(FHIR_BASE, list)] as [number, any];
+    });
+    return fhirSend(reply, out[1], out[0]); // sent only after the audit row is committed
+  });
+
+  /* ---------- Privacy Sentinel (Phase 4b) ----------
+     Rules over the real audit log. The privacy officer (administrator) sees tokens; naming a patient
+     needs a written reason and is itself audited. */
+  async function privacyCtx(c: any) {
+    const k = await orgKey(c);
+    const cfg = Object.fromEntries((await c.query("select key, body_enc from app.ops where coll = 'privacyConfig'")).rows.map((r: any) => [r.key, decJson(k, r.body_enc)]));
+    const tok = async (pid: string) => (await c.query('select app.patient_token($1) as t', [pid])).rows[0].t;
+    const vipTokens = new Set<string>(); for (const pid of cfg.vip || []) { const t = await tok(pid); if (t) vipTokens.add(t); }
+    const relatives: Record<string, string[]> = {}; for (const [u, pids] of Object.entries(cfg.staffRelations || {})) relatives[u] = (await Promise.all((pids as string[]).map(tok))).filter(Boolean);
+    const names = Object.fromEntries((await c.query("select id, name from app.users where role <> 'patient'")).rows.map((r: any) => [r.id, r.name]));
+    return { vipTokens, relatives, names, tz: 'America/Los_Angeles' };
+  }
+  app.get('/api/privacy/alerts', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    if (s.role !== 'admin') { await auditOnly(actor(s), req.ip, { action: 'privacy-scan', outcome: 'denied' }); return reply.code(403).send({ error: 'Not permitted.' }); }
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const rows = (await c.query("select seq, ts, actor, role, action, resource, patient_token, outcome, detail, purpose from audit.log where ts > now() - interval '30 days' order by seq")).rows;
+      const alerts = analyse(rows, await privacyCtx(c));
+      audit({ action: 'privacy-scan', detail: `${rows.length} events, ${alerts.length} alerts` });
+      return { alerts };
+    });
+  });
+  app.post('/api/privacy/reveal', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    const token = String((req.body || {}).token || ''), why = String((req.body || {}).why || '').trim();
+    if (s.role !== 'admin') return reply.code(403).send({ error: 'Not permitted.' });
+    if (!/^PT-[0-9A-F]{6}$/.test(token) || why.length < 10) return reply.code(400).send({ error: 'Give the token and a privacy investigation reason (at least 10 characters).' });
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const id = (await c.query('select id from app.patients_by_token($1)', [token])).rows[0]?.id;
+      if (!id) { reply.code(404); return { error: 'No such token.' }; }
+      const r = (await c.query('select * from app.patient_identity($1)', [id])).rows[0];
+      const dek = kms.unwrap(r.dek_wrapped);
+      audit({ action: 'privacy-identity-reveal', patient_token: token, purpose: 'Privacy investigation', detail: why.slice(0, 200) });
+      return { name: decText(dek, r.name_enc), mrn: decText(dek, r.mrn_enc) };
+    });
+  });
 
   app.get('/api/health', async () => ({ ok: true }));
   app.setErrorHandler((err, _req, reply) => { if (!err.statusCode || err.statusCode >= 500) console.error('[api error]', err.message); reply.code(err.statusCode && err.statusCode < 500 ? err.statusCode : 500).send({ error: err.statusCode && err.statusCode < 500 ? err.message : 'Something went wrong. Nothing was changed.' }); });

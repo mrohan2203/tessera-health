@@ -15,8 +15,68 @@ The prototype enforces its security rules in the browser. This folder holds the 
 | 2 · Security core | Auth + MFA, users and roles, care relationships, patients with encrypted identifiers, audit pipeline, break-the-glass | **Done** (local; cloud deployment pending) |
 | 3 · Clinical modules | Observations (vitals and labs), orders and checks, results loop, notes, MAR, care plan, rapid response | **Done** (local) |
 | 4a · The rest of the app | Front office, ER registration, lab, radiology, blood bank, billing, insurance, OT, quality, admin tools, portal | **Done** (local) |
-| 4b · Interfaces | FHIR API, notifications, privacy analytics over the server audit log | Next |
-| 5 · Hardening | HIPAA risk assessment, pen test, monitoring, backup and DR drills, load test | |
+| 4b · Interfaces | FHIR API, notifications, privacy analytics over the server audit log | **Done** (local) |
+| 5 · Hardening | Identity provider, AWS deployment, HIPAA risk assessment, pen test, monitoring, backup and DR drills, load test | Next |
+
+## Phase 4b: interfaces
+
+### FHIR R4 read API (`/fhir/r4`)
+
+- **Resources:**
+  - `Patient`: read by id, or search by MRN through the blind index.
+  - `Observation`: vitals by LOINC, including the blood-pressure panel; labs with LOINC, reference range and interpretation.
+  - `Condition`: ICD-10 codes from the problem list.
+  - `AllergyIntolerance` and `MedicationRequest`.
+  - `DocumentReference`: signed notes.
+  - The CapabilityStatement at `/fhir/r4/metadata` is public. Mappings are in [`src/fhir.ts`](src/fhir.ts).
+- **Access, the same rules as the app:** the role, care relationships, row-level security and projection apply. A pharmacist gets no problem list; front desk and billing get no FHIR at all. Every read writes an audit row naming the app, and the response is sent only after that row is committed.
+- **Apps:** a signed-in user connects an app the administrator approved (`POST /api/fhir/authorize`), in the style of SMART on FHIR.
+  - Patient apps (`patient/*.read`) can be connected only by the patient, and read only that patient.
+  - Clinician apps (`user/...`) act as the clinician, narrowed to the app's scopes.
+  - Tokens last an hour and are stored hashed.
+  - Revoking the app in Data exchange invalidates its tokens at once.
+
+### Notifications
+
+- **Changes feed** (`GET /api/changes?since=`): what changed for this caller since a moment, with the same filtering as the census. The app polls it every 15 seconds, so a doctor's note appears on the nurse's open chart without a reload.
+  - An item with unsaved local changes is left alone.
+  - The screen isn't redrawn while someone is typing.
+- **Outbox** (`app.outbox`): messages that leave the hospital, by pager, email or SMS.
+  - Triggers: critical lab release (to the ordering doctor), critical results, break-the-glass (privacy office), bed requests (front desk), role and support-access requests (admins), appointment reminders (patient).
+  - Messages are built from tokens and fixed text only; a test scans every message for names, MRNs, dates of birth, phone numbers and clinical values.
+  - Admins see the queue on the Audit log page. Sending is a separate worker, not built yet.
+
+### Privacy Sentinel on the audit log ([`src/sentinel.ts`](src/sentinel.ts))
+
+- **Rules over the last 30 days of the real audit log:**
+  - repeated blocked attempts;
+  - after-hours access by non-clinical roles;
+  - VIP records opened through emergency or pharmacy-wide access;
+  - every break-the-glass (high risk on a VIP record);
+  - staff opening a relative's record, from HR links;
+  - one person opening 15 or more charts in an hour.
+- Alerts carry tokens and evidence rows, never names. The privacy officer names a patient only with `POST /api/privacy/reveal` and a written reason, and the reveal is audited.
+
+### Fixed along the way
+
+- **FHIR responses before the audit commit:** the FHIR handlers sent their response before the audit row was committed, so a failed audit insert could still have released data. They now respond only after the commit, as every other route does.
+- **Sign-out finishing late:** sign-out waits for pending saves before telling the server. If the tab was reloaded or closed first, the server session stayed alive until the idle timeout. The page now leaves a small flag in the tab's session storage (no health data), and the next load finishes the sign-out.
+
+### Verified
+
+- **`npm test`: 55 tests**, 8 of them new for Phase 4b: the CapabilityStatement, the US Core shapes and one audit row per read, FHIR access rules, a patient app and its revocation, clinician app scopes, the changes feed, outbox content scanned for identity, and the Sentinel rules with an audited reveal.
+- **`e2e/live_test.py`:**
+  - A second user's open screen picks up the change.
+  - The Sentinel flags real blocked attempts.
+  - The outbox is visible to the admin.
+  - Every page for every role is on the API.
+- **`e2e/run_live_usecases.py`:** 67 of 73 pass; the remaining 6 exercise demo-only screens and seeded demo history.
+- **Demo mode unchanged:** 73 workflows pass and the sweep is clean.
+
+### Not done
+
+- **Phase 4 leftovers:** bulk `$export`, SMART's full OAuth authorization-code flow with a consent screen, write access over FHIR, and the outbox sending worker.
+- **Phase 2 items, still open:** Okta or Entra ID, AWS, rate limiting, authenticator-code replay, write-once audit storage.
 
 ## Phase 4a: every module on the API
 
@@ -81,7 +141,6 @@ In live mode, every screen for every role now reads and writes through the API. 
 
 ### Still open
 
-- FHIR API, notifications, and the Privacy Sentinel on the server audit log (Phase 4b).
 - From Phase 2: Okta or Entra ID, AWS deployment, rate limiting, authenticator-code replay, and write-once audit storage.
 
 ## Phase 3: clinical records

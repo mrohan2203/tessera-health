@@ -49,6 +49,9 @@
     return {
       info: { mode: 'live', persistsPHI: false, label: 'Live · data from the Tessera API, nothing stored on this device' },
       apiBase: base, api,
+      // A sign-out still on its way to the server (it waits for pending saves). Survives a reload of this
+      // tab so the next load can finish it. Holds no health data.
+      pendingSignOut: { get: () => safe(() => sessionStorage.getItem('tessera-live-signout') === '1', false), set: (on) => safe(() => (on ? sessionStorage.setItem('tessera-live-signout', '1') : sessionStorage.removeItem('tessera-live-signout'))) },
       loadState: () => null, saveState: () => {}, resetState: () => {},
       loadSession: () => null, saveSession: () => {},
       // The server writes the authoritative audit row in the same transaction as each access; the
@@ -113,6 +116,7 @@
   window.TesseraStore = {
     get info() { return adapter.info; }, notice, live: adapter.info.mode === 'live',
     api: (m, p, b) => (adapter.api ? adapter.api(m, p, b) : Promise.reject(new Error('demo mode has no API'))),
+    pendingSignOut: adapter.pendingSignOut || { get: () => false, set: () => {} },
     loadState: () => adapter.loadState(), saveState: (s) => { const t = tracing; tracing = false; try { adapter.saveState(s); } finally { tracing = t; } }, resetState: () => adapter.resetState(),
     loadSession: () => adapter.loadSession(), saveSession: (s) => adapter.saveSession(s),
     appendAudit: (ev, s) => adapter.appendAudit(ev, s), flash: { get: () => adapter.flash.get(), set: (t) => adapter.flash.set(t) },

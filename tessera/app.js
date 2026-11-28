@@ -673,7 +673,7 @@
   }
   function signOut(msg) {
     if (me()) audit(msg && /inactiv/.test(msg) ? 'session-timeout' : 'sign-out');
-    if (LIVE) { const pending = liveFlight; liveLogout = pending.then(() => store.api('POST', '/api/auth/logout')); liveForget(); }
+    if (LIVE) { const pending = liveFlight; store.pendingSignOut.set(true); liveLogout = pending.then(() => store.api('POST', '/api/auth/logout')).then((r) => { if (r.ok) store.pendingSignOut.set(false); }); liveForget(); }
     session = null; saveSession();
     // Clear every per-user screen state so nothing one user saw carries over to the next sign-in
     const keep = { revealed: UI.revealed, auditFilter: { q: '', btg: false } };
@@ -866,6 +866,43 @@
   let liveSnap = new Map(), liveVer = {}, liveBusy = new Set(), liveQueued = false;
   let liveFlight = Promise.resolve(), liveLogout = Promise.resolve(), liveEpoch = 0; // saves in order; sign-out waits for them; a new sign-in waits for sign-out
   T.liveIdle = () => liveFlight.then(() => liveLogout);
+  T.liveApi = (m, path, body) => { const p = liveFlight.then(() => store.api(m, path, body)).then((r) => { if (r.status === 401) liveExpired(); return r; }); liveFlight = p.catch(() => {}); return p; };
+  T.livePrivacyFetch = () => { UI.livePrivacy = { alerts: [] }; T.liveApi('GET', '/api/privacy/alerts').then((r) => { if (r.ok && me()) { UI.livePrivacy = { alerts: r.data.alerts }; render(); } }); };
+
+  /* Changes feed: every 15 seconds, other people's work is merged in. An item with unsaved local changes
+     is left alone (its own save will meet any conflict), and the screen is redrawn only when nobody is
+     typing, so a half-filled form is never wiped. */
+  let liveSince = null, livePending = false;
+  function livePoll() {
+    if (!LIVE || !me() || !liveSince || liveQueued || liveBusy.size || livePending) return;
+    livePending = true; const ep = liveEpoch;
+    liveFlight = liveFlight.then(async () => {
+      const r = await store.api('GET', '/api/changes?since=' + encodeURIComponent(liveSince));
+      livePending = false;
+      if (ep !== liveEpoch) return;
+      if (r.status === 401) return liveExpired();
+      if (!r.ok) return;
+      liveSince = r.data.now;
+      let n = 0;
+      Object.entries(r.data.versions || {}).forEach(([ck, ver]) => {
+        const i = ck.indexOf('|'), c = ck.slice(0, i), k = ck.slice(i + 1);
+        if (!LIVE_COLLS[c] || (liveVer[ck] || 0) >= ver) return;
+        const recs = r.data.records[c];
+        const body = LIVE_COLLS[c] === 'scalar' ? recs : isArr(c) ? (recs || []).find((x) => itemKey(x) === k) : (recs || {})[k];
+        if (body === undefined) return;
+        const local = LIVE_COLLS[c] === 'scalar' ? S[c] : isArr(c) ? (S[c] || []).find((x) => itemKey(x) === k) : (S[c] || {})[k];
+        if (local !== undefined && liveSnap.has(ck) && JSON.stringify(local) !== liveSnap.get(ck)) return; // unsaved here
+        if (LIVE_COLLS[c] === 'scalar') S[c] = body;
+        else if (isArr(c)) { const a = S[c] = S[c] || []; const j = a.findIndex((x) => itemKey(x) === k); if (j >= 0) a[j] = body; else a.push(body); }
+        else { S[c] = S[c] || {}; S[c][k] = body; }
+        if (c === 'patientPatches') applyPatches(k);
+        liveVer[ck] = ver; liveSnap.set(ck, JSON.stringify(body)); n++;
+      });
+      if (n) { const a = document.activeElement; if (!(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.closest('#app'))) render(); else UI.liveDirtyRender = true; }
+    }).catch((e) => { livePending = false; console.error(e); });
+  }
+  T.livePoll = livePoll;
+  if (LIVE) { setInterval(livePoll, 15000); document.addEventListener('focusout', () => { if (UI.liveDirtyRender) setTimeout(() => { if (UI.liveDirtyRender && !(document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))) { UI.liveDirtyRender = false; render(); } }, 50); }); }
   const ownerOf = (c, k, x) => { const t = LIVE_COLLS[c]; return t === 'arr' ? x && x.patient : t === 'mar' ? k.split('|')[0] : t === 'verified' ? ((S.orders || []).find((o) => o.id === k) || {}).patient : t === 'dcsum' ? ((S.discharges || []).find((d) => d.id === k) || {}).patient : t === 'pt' ? k : ''; };
   function liveEach(fn, onlyPid) {
     Object.keys(LIVE_COLLS).forEach((c) => {
@@ -1000,6 +1037,7 @@
     (d.users || []).forEach((x) => { const v = U(x.id); if (v) Object.assign(v, { role: x.role, dept: x.dept || undefined, unit: x.unit || undefined, title: x.title || v.title, status: x.status }, x.name ? { name: x.name } : {}); else S.users.push(Object.assign({}, x, { name: x.name || 'Patient' })); });
     liveUsersSnap = new Map(S.users.map((x) => [x.id, userKey(x)]));
     liveInstall(d);
+    liveSince = d.now || new Date().toISOString();
     S.btg = (d.btg || []).map((g, i) => ({ id: 'BTG-L' + i, user: d.user.id, patient: g.patient_id, reason: g.reason, text: g.justification, at: g.granted_at, expires: g.expires_at, reviewed: false }));
     let u = U(d.user.id);
     if (!u) { u = { id: d.user.id }; S.users.push(u); }
@@ -1016,6 +1054,7 @@
     UI.live = { stage: 'loading' };
     S = store.trackState(S); T.store = store; store.attach(T);
     render();
+    if (store.pendingSignOut.get()) { await store.api('POST', '/api/auth/logout'); store.pendingSignOut.set(false); } // finish a sign-out the last page left in flight
     const r = await store.api('GET', '/api/bootstrap');
     if (r.ok) liveLoad(r.data, 'resume');
     else { UI.live = { stage: 'password' }; UI.msg = r.status === 0 ? r.data.error : ''; render(); }
@@ -1091,20 +1130,21 @@
   VIEWS.audit = (u, args) => {
     if (LIVE && !UI.liveAudit) {
       UI.liveAudit = { events: [], grants: [] };
-      Promise.all([store.api('GET', '/api/audit?limit=300'), store.api('GET', '/api/btg')]).then(([a, b]) => {
+      Promise.all([store.api('GET', '/api/audit?limit=300'), store.api('GET', '/api/btg'), u.role === 'admin' ? store.api('GET', '/api/outbox') : Promise.resolve({ data: {} })]).then(([a, b, o]) => {
         if (a.status === 401) return liveExpired();
         UI.liveAudit = {
           events: (a.data.events || []).slice().reverse().map((e) => ({ seq: e.seq, ts: e.ts, actor: e.actor, role: e.role, action: e.action, resource: e.resource, detail: e.detail, patient: e.patient_token, outcome: e.outcome })),
-          grants: (b.data.grants || []).map((g) => ({ id: g.id, user: g.user_id, patient: g.patient_id, token: g.token, reason: g.reason, text: g.justification, at: g.granted_at, reviewed: !!g.reviewed_at, own: g.user_id === u.id }))
+          grants: (b.data.grants || []).map((g) => ({ id: g.id, user: g.user_id, patient: g.patient_id, token: g.token, reason: g.reason, text: g.justification, at: g.granted_at, reviewed: !!g.reviewed_at, own: g.user_id === u.id })),
+          outbox: o.data.messages || []
         };
         render();
       });
     }
     const v = viewAuditDemo(u, args);
-    if (LIVE) v.sub = 'From the Tessera API · append-only · hash-chained in the database · this view is logged';
+    if (LIVE) { v.sub = 'From the Tessera API · append-only · hash-chained in the database · this view is logged'; const ob = (UI.liveAudit || {}).outbox || []; if (u.role === 'admin') v.body += panel(`Outbound messages · ${ob.length}`, table(['When', 'Channel', 'To', 'Message'], ob.slice(0, 50).map((m) => `<tr><td>${timeStr(m.created_at)}</td><td>${esc(m.channel)}</td><td>${esc(m.to_user ? (U(m.to_user) || { name: m.to_user }).name : m.to_role)}</td><td><b>${esc(m.subject)}</b><span class="sub">${esc(m.body)}</span></td></tr>`)), '<span class="kpi-note">Pager, email and SMS carry tokens and fixed text only, never names or clinical values</span>', true); }
     return v;
   };
-  T.after.push((u, route) => { if (!LIVE) return; if (route !== 'patient') UI.liveChart = null; if (route !== 'audit') UI.liveAudit = null; });
+  T.after.push((u, route) => { if (!LIVE) return; if (route !== 'patient') UI.liveChart = null; if (route !== 'audit') UI.liveAudit = null; if (route !== 'privacy') UI.livePrivacy = null; });
   async function liveVerify() {
     const r = await store.api('GET', '/api/audit/verify');
     UI.chainResult = r.ok ? { ok: r.data.ok, n: r.data.checked, at: r.data.broken_at } : { ok: false, at: '?' };

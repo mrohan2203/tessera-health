@@ -14,8 +14,8 @@ def totp(secret):
 DEMO_ONLY = ['Password sign-in with MFA', 'Wrong password is rejected', 'Suspended account is blocked',  # demo sign-in screen; live sign-in is covered by live_test.py
              'Data layer: demo adapter',  # demo storage; the live adapter is covered by live_test.py
              'Care plan: accept suggestions']  # the test rewrites a result's history locally, which the server correctly refuses
-PHASE_4B = ['Privacy Sentinel']  # analyses the audit trail; in live mode this runs on the server's audit log (Phase 4b)
-EXPECTED = DEMO_ONLY + PHASE_4B
+DEMO_ONLY += ['Privacy Sentinel']  # built on the demo's seeded access history and alert ids; the live Sentinel (server audit log) is covered by live_test.py
+EXPECTED = DEMO_ONLY
 with sync_playwright() as pw:
     b = pw.chromium.launch(args=["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
     p = b.new_page(viewport={"width": 1440, "height": 900}); errs = []

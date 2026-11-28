@@ -19,6 +19,7 @@
   // Proactive detection of inappropriate record access, explained in plain language,
   // with a guided HIPAA breach risk assessment. Admin sees patient tokens, not names.
   function privacyAlerts() {
+    if (T.store && T.store.live) { if (!UI.livePrivacy) T.livePrivacyFetch(); return (UI.livePrivacy && UI.livePrivacy.alerts) || []; } /* live: rules run on the server over the real audit log */
     const out = []; const add = (id, risk, rule, who, pt, why, evidence) => out.push({ id, risk, rule, who, pt, why, evidence });
     // Seeded history (clearly labeled)
     const h = SEED.privacyHistory; const bl = h.filter((e) => e.outcome === 'blocked');
@@ -59,7 +60,8 @@
     'ps-reveal': (d) => openModal({ title: 'Reveal patient identity', form: 'ps-reveal', submit: 'Reveal', body: `<input type="hidden" name="id" value="${d.id}"><div class="field"><label for="pr">Privacy investigation reason</label><input id="pr" name="why" required placeholder="e.g. Case PS-2026-11: possible snooping"></div><p class="kpi-note">Logged. Identity is needed to judge harm and notify the patient.</p>` }),
     'ps-ok': (d) => { S().privacyCases[d.id] = { outcome: 'Appropriate access: documented and closed', by: me().name, at: new Date().toISOString() }; audit('privacy-case-close', { resource: d.id, detail: 'appropriate' }); save(); render(); }
   });
-  FORMS['ps-reveal'] = (f) => { const a = privacyAlerts().find((x) => x.id === f.id); const t = a.pt.split(' ')[0]; const p = T.allPts().find((x) => tok(x) === t); S().privacyCases[f.id] = Object.assign(S().privacyCases[f.id] || {}, { revealed: p ? `${p.name} · MRN ${p.mrn}` : t }); UI.modal = null; audit('privacy-identity-reveal', { patient: p, detail: f.why, purpose: 'Privacy investigation' }); save(); render(); };
+  FORMS['ps-reveal'] = (f) => { if (T.store && T.store.live) return T.liveApi('POST', '/api/privacy/reveal', { token: privacyAlerts().find((x) => x.id === f.id).pt.split(' ')[0], why: f.why }).then((r) => { if (!r.ok) { T.toast(r.data.error || 'Not revealed.'); return; } S().privacyCases[f.id] = Object.assign(S().privacyCases[f.id] || {}, { revealed: `${r.data.name} · MRN ${r.data.mrn}` }); UI.modal = null; save(); render(); });
+    const a = privacyAlerts().find((x) => x.id === f.id); const t = a.pt.split(' ')[0]; const p = T.allPts().find((x) => tok(x) === t); S().privacyCases[f.id] = Object.assign(S().privacyCases[f.id] || {}, { revealed: p ? `${p.name} · MRN ${p.mrn}` : t }); UI.modal = null; audit('privacy-identity-reveal', { patient: p, detail: f.why, purpose: 'Privacy investigation' }); save(); render(); };
   FORMS['ps-assess'] = (f) => { const high = ['f1', 'f2', 'f3', 'f4'].filter((k) => f[k] === 'high').length; const d = new Date(Date.now() + 60 * 864e5);
     const c = S().privacyCases[f.id] = Object.assign(S().privacyCases[f.id] || {}, high && f.f3 === 'high' ? { outcome: 'Breach: notification required.', deadline: d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) + ' (60 days from discovery); log for the annual HHS report (under 500 people)' } : { outcome: 'Low probability of compromise: documented, no notification required.' });
     c.by = me().name; c.at = new Date().toISOString(); audit('privacy-breach-assessment', { resource: f.id, detail: c.outcome }); save(); render(); };

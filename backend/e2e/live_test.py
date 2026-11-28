@@ -104,6 +104,23 @@ with sync_playwright() as pw:
     signin(page, 'grace.rn'); page.goto(URL + '#patient-P01-notes'); page.wait_for_selector('.ptheader', timeout=8000); page.wait_for_timeout(300)
     check('Live note: potassium 6.1' in page.inner_text('.content'), "the doctor's note reaches the nurse")
     signout(page)
+    # Phase 4b: the changes feed brings one user's work to another's open screen, without a reload
+    ctx2 = b.new_context(); page2 = ctx2.new_page(); page2.on('pageerror', lambda e: errors.append(str(e)))
+    signin(page2, 'grace.rn'); page2.goto(URL + '#patient-P01-notes'); page2.wait_for_selector('.ptheader', timeout=8000)
+    signin(page, 'elena.cardio'); page.goto(URL + '#patient-P01-notes'); page.wait_for_selector('form[data-form="note"]', timeout=8000)
+    page.fill('form[data-form="note"] textarea', 'Feed check: repeat potassium at 14:00'); page.click('form[data-form="note"] button[type=submit]')
+    page.evaluate('Tessera.liveIdle()'); page.wait_for_timeout(600)
+    page2.evaluate('Tessera.livePoll(); Tessera.liveIdle()'); page2.wait_for_timeout(800)
+    check('Feed check: repeat potassium' in page2.inner_text('.content'), "the nurse's open chart shows the doctor's new note without a reload")
+    signout(page); ctx2.close()
+    # Phase 4b: Privacy Sentinel runs on the server's audit log
+    signin(page, 'marcus.billing')
+    for pid in ['P01', 'P02', 'P03']: page.goto(URL + f'#patient-{pid}-overview'); page.wait_for_timeout(500)
+    signout(page)
+    signin(page, 'dana.admin'); page.goto(URL + '#privacy'); page.wait_for_timeout(1500)
+    txt = page.inner_text('.content'); check('Repeated blocked chart access' in txt and 'Marcus' in txt, 'Sentinel flags the blocked attempts from the real audit log')
+    page.goto(URL + '#audit'); page.wait_for_timeout(1500); check('Outbound messages' in page.inner_text('.content'), 'admin sees the outbound message queue')
+    signout(page)
     # crawl every menu page for every role in live mode
     nc = []
     for user in CREDS:

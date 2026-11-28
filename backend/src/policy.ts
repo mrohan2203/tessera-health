@@ -81,6 +81,7 @@ export const POLICY: Record<string, Policy> = {
   extracts: P(true, false, ['quality'], ['quality']),
   privacyCases: P(false, false, ['admin'], ['admin']),
   forecastWhatIf: P(false, false, ['executive'], ['executive'], { scalar: true }),
+  privacyConfig: P(false, false, ['admin'], ['admin']), // VIP list and HR relative links for the Privacy Sentinel
 };
 export const COLL_NAMES = Object.keys(POLICY);
 export const isPatientColl = (c: string) => !!(POLICY[c] && POLICY[c].pt);

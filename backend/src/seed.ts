@@ -82,6 +82,9 @@ for (const [coll, pol] of Object.entries(POLICY)) {
     if (pid) await rec(coll, k, pid, x);
   }
 }
+// Privacy Sentinel configuration: VIP-flagged patients and HR relative links (synthetic)
+await op('privacyConfig', 'vip', SEED.vip || []);
+await op('privacyConfig', 'staffRelations', SEED.staffRelations || {});
 await c.query('commit'); c.release(); await db.end();
 writeFileSync(new URL('../.dev-credentials.json', import.meta.url), JSON.stringify(creds, null, 1), { mode: 0o600 });
 console.log(`seeded ${SEED.users.length} users, ${SEED.patients.length} patients, ${n} care relationships, ${nrec} patient records, ${nops} operational records; development credentials in backend/.dev-credentials.json (git-ignored)`);
