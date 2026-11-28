@@ -19,7 +19,7 @@
   // Proactive detection of inappropriate record access, explained in plain language,
   // with a guided HIPAA breach risk assessment. Admin sees patient tokens, not names.
   function privacyAlerts() {
-    if (T.store && T.store.live) { if (!UI.livePrivacy) T.livePrivacyFetch(); return (UI.livePrivacy && UI.livePrivacy.alerts) || []; } /* live: rules run on the server over the real audit log */
+    if (T.store && T.store.live) { const onPage = /^#privacy/.test(location.hash); if (onPage && !UI.livePrivacyOpened) { UI.livePrivacyOpened = true; T.livePrivacyFetch(true); } else if (!UI.livePrivacy || Date.now() - (UI.livePrivacy.at || 0) > 60000) T.livePrivacyFetch(); /* opening the Sentinel scans afresh; the dashboard tile uses the minute-old scan */ return (UI.livePrivacy && UI.livePrivacy.alerts) || []; } /* live: rules run on the server over the real audit log */
     const out = []; const add = (id, risk, rule, who, pt, why, evidence) => out.push({ id, risk, rule, who, pt, why, evidence });
     // Seeded history (clearly labeled)
     const h = SEED.privacyHistory; const bl = h.filter((e) => e.outcome === 'blocked');

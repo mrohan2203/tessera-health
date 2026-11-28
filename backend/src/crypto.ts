@@ -61,9 +61,19 @@ export function totp(secret: string, at = Date.now(), step = 0): string {
   const h = createHmac('sha1', unbase32(secret)).update(msg).digest(); const o = h[h.length - 1] & 15;
   return String((h.readUInt32BE(o) & 0x7fffffff) % 1_000_000).padStart(6, '0');
 }
-export const verifyTotp = (secret: string, code: string) => [-1, 0, 1].some((s) => timingSafeEqual(Buffer.from(totp(secret, Date.now(), s)), Buffer.from(String(code).padStart(6, '0').slice(0, 6))));
+export const verifyTotp = (secret: string, code: string) => totpStep(secret, code) !== null;
+/* The 30-second step a code belongs to (now, or one step either side for clock drift), or null. The
+   caller refuses a step it has already accepted, so each code works once. */
+export function totpStep(secret: string, code: string, at = Date.now()): number | null {
+  const c = Buffer.from(String(code).padStart(6, '0').slice(0, 6));
+  for (const s of [-1, 0, 1]) if (timingSafeEqual(Buffer.from(totp(secret, at, s)), c)) return Math.floor(at / 30000) + s;
+  return null;
+}
 
 const pepper = Buffer.from(env.SESSION_PEPPER_HEX, 'hex');
 export const newSessionToken = () => randomBytes(32).toString('base64url');
 export const sessionHash = (t: string) => createHash('sha256').update(pepper).update(t).digest();
 export const patientToken = (mrn: string) => 'PT-' + createHmac('sha256', indexKey).update('token|' + mrn).digest('hex').slice(0, 6).toUpperCase();
+/* Raw byte encryption for backups (AES-256-GCM, same format as fields). */
+export const sealBytes = (key: Buffer, b: Buffer) => seal(key, b);
+export const openBytes = (key: Buffer, b: Buffer) => open(key, b);

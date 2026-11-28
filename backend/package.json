@@ -15,7 +15,13 @@
     "seed": "node --experimental-strip-types --no-warnings src/seed.ts",
     "dev": "node --experimental-strip-types --no-warnings src/server.ts",
     "totp": "node --experimental-strip-types --no-warnings src/devtotp.ts",
-    "test": "node --experimental-strip-types --no-warnings --test --test-concurrency=1 test/*.test.ts"
+    "test": "node --experimental-strip-types --no-warnings --test --test-concurrency=1 test/*.test.ts",
+    "backup": "node --experimental-strip-types --no-warnings src/backup.ts",
+    "drill": "node --experimental-strip-types --no-warnings src/backup.ts drill",
+    "rotate-kek": "node --experimental-strip-types --no-warnings src/rotate-kek.ts",
+    "audit:checkpoint": "node --experimental-strip-types --no-warnings src/audit-cli.ts checkpoint",
+    "audit:verify": "node --experimental-strip-types --no-warnings src/audit-cli.ts verify",
+    "loadtest": "node --experimental-strip-types --no-warnings scripts/loadtest.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.5",

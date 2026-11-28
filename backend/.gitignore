@@ -3,3 +3,5 @@ node_modules/
 .env
 .dev-credentials.json
 *.log
+.worm/
+backups/

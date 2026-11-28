@@ -79,7 +79,12 @@ with sync_playwright() as pw:
     signout(page)
     # admin: server audit log, verify chain, review the grant
     signin(page, 'dana.admin'); page.goto(URL + '#audit'); page.wait_for_timeout(1200)
-    txt = page.inner_text('.content'); check('break-the-glass' in txt and 'census' in txt, 'audit log shows server events')
+    page.wait_for_function("document.querySelector('.content') && /Events · [1-9]/.test(document.querySelector('.content').innerText)", timeout=8000)
+    t_ = page.inner_text('.content'); check('Events · ' in t_ and 'sign-in' in t_, 'audit log shows server events' + ('' if 'sign-in' in t_ else ' :: ' + t_[:300].replace('\n', ' | ')))
+    page.fill('form[data-form="afilter"] input[name=q]', 'census'); page.click('form[data-form="afilter"] button[type=submit]'); page.wait_for_timeout(1200)
+    check('census' in page.inner_text('.content'), 'searching the audit log reaches the whole server log'); page.fill('form[data-form="afilter"] input[name=q]', '')
+    page.check('form[data-form="afilter"] input[name=btg]'); page.click('form[data-form="afilter"] button[type=submit]'); page.wait_for_timeout(1200)
+    check('break-the-glass' in page.inner_text('.content'), 'the break-the-glass filter searches the whole server log')
     page.click('button[data-act="verify-chain"]'); page.wait_for_selector('.banner.ok', timeout=8000)
     check('Chain intact' in page.inner_text('.content'), 'server chain verifies')
     if page.locator('button[data-act="btg-review"]').count():

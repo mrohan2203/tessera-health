@@ -16,7 +16,86 @@ The prototype enforces its security rules in the browser. This folder holds the 
 | 3 · Clinical modules | Observations (vitals and labs), orders and checks, results loop, notes, MAR, care plan, rapid response | **Done** (local) |
 | 4a · The rest of the app | Front office, ER registration, lab, radiology, blood bank, billing, insurance, OT, quality, admin tools, portal | **Done** (local) |
 | 4b · Interfaces | FHIR API, notifications, privacy analytics over the server audit log | **Done** (local) |
-| 5 · Hardening | Identity provider, AWS deployment, HIPAA risk assessment, pen test, monitoring, backup and DR drills, load test | Next |
+| 5a · Hardening | Identity provider, rate limits, single-use codes, write-once audit, key rotation, backup and restore drill, monitoring, security probe, load test, threat model | **Done** (local) |
+| 5b · Deployment | AWS (KMS, RDS, S3 Object Lock, WAF, ECS, CloudWatch), BAAs, independent penetration test, formal HIPAA risk analysis | Next |
+
+## Phase 5a: hardening
+
+### Sign-in through the identity provider ([`src/oidc.ts`](src/oidc.ts))
+
+- **Turning it on:** set `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` (Okta, Entra ID or any OpenID Connect issuer). The password sign-in then switches off, and the app shows "Sign in with your organisation".
+- **The flow:** authorization code with PKCE, a single-use state, and a nonce. The ID token's RS256 signature is checked against the provider's published keys, along with issuer, audience and expiry. The provider must assert MFA (`amr` contains `mfa`).
+- **Accounts:** the `preferred_username` claim maps to the Tessera account, which must exist and be active.
+- **Audit:** successes and refusals are audited with the reason.
+- **Tests:** run against a local mock provider. They cover a good sign-in, state replay, missing MFA, a wrong nonce, a wrong audience, an expired token, an unknown user, a suspended account, and a forged signature.
+
+### Rate limits and single-use codes
+
+- **Limits** ([`src/ratelimit.ts`](src/ratelimit.ts)): token buckets.
+  - Sign-in: 20 a minute per address, bursts of 10.
+  - API: 600 a minute per session.
+  - FHIR: 120 a minute per token.
+  - Over the limit the API answers 429 with Retry-After, and audits it once a minute per key.
+- **Authenticator codes:** each code works once. The last accepted 30-second step is stored, and that step or any earlier one is refused.
+- **Local automation:** both can be switched off with `RATE_LIMITS=0` and `ALLOW_TOTP_REUSE=1`, which the development server in `.claude/launch.json` uses for the browser tests. They are ignored when `NODE_ENV=production`.
+
+### Write-once audit checkpoints ([`src/worm.ts`](src/worm.ts))
+
+- **What a checkpoint holds:** every 5 minutes, and on `npm run audit:checkpoint`, the chain's head (last row number, its hash, the row count) is signed with `AUDIT_SIGNING_KEY_HEX`, a key the database never holds. Each checkpoint also signs the one before it.
+- **Where it goes:** a file created exclusively and made read-only (`backend/.worm/` locally). In production, an S3 bucket with Object Lock in compliance mode.
+- **What verification catches** (`npm run audit:verify`, and the admin's Verify chain button):
+  - someone with schema rights rebuilding the whole chain, which the chain check alone misses;
+  - rows removed;
+  - a checkpoint missing or forged.
+- **Tested** by actually rebuilding the chain inside a rolled-back transaction.
+
+### Keys, backups and recovery
+
+- **Master key rotation** (`NEW_KEK_HEX=… npm run rotate-kek`): re-wraps every patient data key, the organisation key and the authenticator secrets in one transaction, then checks them. No health data is re-encrypted. Restart the API afterwards. With AWS KMS, yearly rotation is automatic; this is for a suspected compromise.
+- **Encrypted backups** (`npm run backup`): `pg_dump` of the whole database, encrypted with a fresh key wrapped by the master key, written to `backend/backups/` (git-ignored, mode 600).
+- **Restore drill** (`npm run drill`):
+  - decrypts the newest backup and restores it into a scratch database;
+  - checks that the audit chain verifies, that row counts match the backup's manifest, and that a patient's identifiers decrypt;
+  - drops the scratch database and reports the time. The last run took 0.6 s for 23 patients and 27,593 audit rows.
+
+### Monitoring
+
+- `GET /api/health` (liveness) and `GET /api/ready` (database, keys and audit, or 503).
+- `GET /api/metrics`: Prometheus text, readable with `METRICS_TOKEN` or an administrator session.
+- One JSON log line per request: method, route template, status, milliseconds. Never an id, a query string or a body.
+- Tests check that logs and metrics carry no patient ids or health data.
+
+### Security probe and load test
+
+- **`test/probe.test.ts`:**
+  - walks all 30 registered routes; every protected route refuses no session, a forged session and a signed-out one;
+  - CSRF and origin checks on every write route;
+  - IDOR attempts on charts and FHIR;
+  - SQL injection, path and script payloads in every parameter;
+  - oversized and malformed bodies;
+  - security headers and cookie flags on every response.
+- **`npm run loadtest -- 40 30`:** 40 users across 9 roles for 30 seconds against the running API.
+  - 33,832 requests, about 1,125 a second, 0 server errors.
+  - p95 under 90 ms for every kind of request.
+  - 145 writes refused as version conflicts between users (expected), and the audit chain intact afterwards across 80,339 rows.
+
+### Threat model
+
+[`SECURITY.md`](SECURITY.md) has the assets, trust boundaries, a STRIDE table mapped to the tests, the HIPAA 164.312 technical safeguards, and the residual risks.
+
+### Fixed along the way
+
+- The admin dashboard re-ran the Privacy Sentinel on every redraw. It is now pre-filtered in SQL, indexed by time and cached for a minute; opening the Sentinel page scans afresh.
+- The live audit page could show only the newest 300 events. Its filter and search now run on the server, over the whole log.
+- Invalid write requests no longer echo the attacker's collection name back.
+
+### Verified
+
+- **`npm test`: 66 tests**, 11 of them new for Phase 5a.
+- **`e2e/live_test.py`:** all checks pass, including that searching the audit log reaches the whole server log.
+- **`e2e/run_live_usecases.py`:** 67 of 73 pass, with the same 6 demo-only failures as before.
+- **Demo mode unchanged:** 73 workflows pass and the sweep is clean.
+- **Backup drill and checkpoint verification:** both pass.
 
 ## Phase 4b: interfaces
 
@@ -76,7 +155,7 @@ The prototype enforces its security rules in the browser. This folder holds the 
 ### Not done
 
 - **Phase 4 leftovers:** bulk `$export`, SMART's full OAuth authorization-code flow with a consent screen, write access over FHIR, and the outbox sending worker.
-- **Phase 2 items, still open:** Okta or Entra ID, AWS, rate limiting, authenticator-code replay, write-once audit storage.
+- **Phase 2 items:** done in Phase 5a, except AWS, which is Phase 5b.
 
 ## Phase 4a: every module on the API
 

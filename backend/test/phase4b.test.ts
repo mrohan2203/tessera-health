@@ -10,6 +10,8 @@ import { build } from '../src/server.ts';
 import { appPool } from '../src/db.ts';
 import { totp } from '../src/crypto.ts';
 import { env } from '../src/env.ts';
+// These suites sign the same accounts in many times a minute; hardening.test.ts covers both protections
+env.ALLOW_TOTP_REUSE = true; env.RATE_LIMITS = false; process.env.TESSERA_QUIET = '1';
 
 const root = new URL('..', import.meta.url).pathname;
 const ctx: any = { window: {} }; vm.createContext(ctx);
@@ -145,7 +147,7 @@ test('the Privacy Sentinel finds blocked attempts, VIP emergency access and a re
   const fd = await boot('sofia.frontdesk'); // Sofia is related to P24 (HR record)
   assert.ok((await write('sofia.frontdesk', { coll: 'appts', key: 'K-REL', patient: 'P24', version: 0, body: { _k: 'K-REL', patient: 'P24', time: '16:30', reason: 'Follow-up visit', provider: 'U-2001', status: 'Scheduled' } })).ok, 'booking failed');
   void fd;
-  const r = await get('dana.admin', '/api/privacy/alerts'); assert.equal(r.statusCode, 200);
+  const r = await get('dana.admin', '/api/privacy/alerts?refresh=1'); assert.equal(r.statusCode, 200);
   const alerts = J(r).alerts;
   const rule = (x: string) => alerts.filter((a: any) => a.rule === x);
   const deny = rule('Repeated blocked chart access').find((a: any) => a.who === 'U-5001');

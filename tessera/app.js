@@ -799,7 +799,7 @@
     count(f) { const c = S.controlled[+f.i], u = me(); const qty = +f.qty; S.counts.push({ item: c.item, qty, expected: c.onHand, by: u.name, witness: f.witness, at: new Date().toISOString() }); c.lastCount = 0; c.onHand = qty; UI.modal = null; audit('controlled-count', { detail: `${c.item}: ${qty} (witness ${f.witness})` }); save(); render(); },
     query(f) { const c = S.claims.find((x) => x.id === f.c); UI.modal = null; audit('coding-query', { patient: P(c.patient), resource: c.id }); render(); toast('Query sent to the attending physician\'s inbox.'); },
     identify(f) { if (LIVE) liveFlight = liveFlight.then(() => liveReveal(f.purpose)).catch((e) => console.error(e)); UI.identified = { user: me().id, purpose: f.purpose }; UI.modal = null; audit('phi-reveal', { detail: `care gaps identified view · ${f.purpose}` }); render(); },
-    afilter(f) { UI.auditFilter = { q: f.q || '', btg: !!f.btg }; render(); },
+    afilter(f) { UI.auditFilter = { q: f.q || '', btg: !!f.btg }; if (LIVE) UI.liveAudit = null; render(); },
     role(f) {
       const x = U(f.u), [role, sc] = f.to.split(':');
       const toLabel = role === 'doctor' ? `Attending, ${DEPT[sc]}` : role === 'nurse' ? `Nurse, ${UNIT[sc]}` : { pharmacist: 'Clinical pharmacist', billing: 'Revenue cycle specialist', quality: 'Quality & HEDIS analyst', admin: 'Tenant administrator' }[role];
@@ -867,7 +867,8 @@
   let liveFlight = Promise.resolve(), liveLogout = Promise.resolve(), liveEpoch = 0; // saves in order; sign-out waits for them; a new sign-in waits for sign-out
   T.liveIdle = () => liveFlight.then(() => liveLogout);
   T.liveApi = (m, path, body) => { const p = liveFlight.then(() => store.api(m, path, body)).then((r) => { if (r.status === 401) liveExpired(); return r; }); liveFlight = p.catch(() => {}); return p; };
-  T.livePrivacyFetch = () => { UI.livePrivacy = { alerts: [] }; T.liveApi('GET', '/api/privacy/alerts').then((r) => { if (r.ok && me()) { UI.livePrivacy = { alerts: r.data.alerts }; render(); } }); };
+  // Sentinel alerts are cached for a minute: the admin dashboard asks on every redraw, and each scan analyses 30 days and is audited
+  T.livePrivacyFetch = (fresh) => { const old = UI.livePrivacy; UI.livePrivacy = { alerts: (old && old.alerts) || [], at: Date.now() }; T.liveApi('GET', '/api/privacy/alerts' + (fresh ? '?refresh=1' : '')).then((r) => { if (r.ok && me()) { UI.livePrivacy = { alerts: r.data.alerts, at: Date.now() }; render(); } }); };
 
   /* Changes feed: every 15 seconds, other people's work is merged in. An item with unsaved local changes
      is left alone (its own save will meet any conflict), and the screen is redrawn only when nobody is
@@ -1025,7 +1026,7 @@
     SEED.patients.length = 0;
     liveRestoreSeed(new Set());
     S = withModules(freshState());
-    UI.live = { stage: 'password' }; UI.liveChart = null; UI.liveAudit = null;
+    UI.live = { stage: 'password' }; UI.liveChart = null; UI.liveAudit = null; UI.livePrivacy = null;
     liveSnap = new Map(); liveVer = {}; liveBusy = new Set(); liveUsersSnap = new Map(); liveEpoch++;
   }
   function liveLoad(d, how) {
@@ -1055,6 +1056,8 @@
     S = store.trackState(S); T.store = store; store.attach(T);
     render();
     if (store.pendingSignOut.get()) { await store.api('POST', '/api/auth/logout'); store.pendingSignOut.set(false); } // finish a sign-out the last page left in flight
+    const ac = await store.api('GET', '/api/auth/config'); UI.liveOidc = ac.ok && ac.data.oidc ? ac.data.issuer : null;
+    const se = new URLSearchParams(location.search).get('signin_error'); if (se) UI.msg = 'Your organisation\'s sign-in did not complete, or this account has no access. The attempt was logged.';
     const r = await store.api('GET', '/api/bootstrap');
     if (r.ok) liveLoad(r.data, 'resume');
     else { UI.live = { stage: 'password' }; UI.msg = r.status === 0 ? r.data.error : ''; render(); }
@@ -1063,6 +1066,7 @@
   function viewLiveLogin() {
     const st = (UI.live || {}).stage || 'loading';
     const form = st === 'loading' ? '<p class="e-note">Connecting to the Tessera API…</p>'
+      : UI.liveOidc ? `<div class="e-pw"><a class="btn primary" href="${esc(store.apiBase)}/api/auth/oidc/start" data-oidc>Sign in with your organisation</a><p class="e-note">You'll sign in at ${esc(UI.liveOidc)} with your usual password and second factor.</p></div>`
       : st === 'mfa' ? `<form data-form="live-mfa" class="e-pw" autocomplete="off">
           <div class="field"><label for="lg-code">6-digit code from your authenticator app</label><input id="lg-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus></div>
           <button class="btn primary" type="submit">Verify and sign in</button><button class="btn" type="button" data-act="live-restart">Start again</button></form>`
@@ -1130,7 +1134,8 @@
   VIEWS.audit = (u, args) => {
     if (LIVE && !UI.liveAudit) {
       UI.liveAudit = { events: [], grants: [] };
-      Promise.all([store.api('GET', '/api/audit?limit=300'), store.api('GET', '/api/btg'), u.role === 'admin' ? store.api('GET', '/api/outbox') : Promise.resolve({ data: {} })]).then(([a, b, o]) => {
+      const f = UI.auditFilter || {}; const qs = `limit=300${f.btg ? '&action=break-the-glass' : ''}${f.q ? '&q=' + encodeURIComponent(f.q) : ''}`; // filtered on the server, so nothing older is out of reach
+      Promise.all([store.api('GET', '/api/audit?' + qs), store.api('GET', '/api/btg'), u.role === 'admin' ? store.api('GET', '/api/outbox') : Promise.resolve({ data: {} })]).then(([a, b, o]) => {
         if (a.status === 401) return liveExpired();
         UI.liveAudit = {
           events: (a.data.events || []).slice().reverse().map((e) => ({ seq: e.seq, ts: e.ts, actor: e.actor, role: e.role, action: e.action, resource: e.resource, detail: e.detail, patient: e.patient_token, outcome: e.outcome })),
@@ -1144,7 +1149,7 @@
     if (LIVE) { v.sub = 'From the Tessera API · append-only · hash-chained in the database · this view is logged'; const ob = (UI.liveAudit || {}).outbox || []; if (u.role === 'admin') v.body += panel(`Outbound messages · ${ob.length}`, table(['When', 'Channel', 'To', 'Message'], ob.slice(0, 50).map((m) => `<tr><td>${timeStr(m.created_at)}</td><td>${esc(m.channel)}</td><td>${esc(m.to_user ? (U(m.to_user) || { name: m.to_user }).name : m.to_role)}</td><td><b>${esc(m.subject)}</b><span class="sub">${esc(m.body)}</span></td></tr>`)), '<span class="kpi-note">Pager, email and SMS carry tokens and fixed text only, never names or clinical values</span>', true); }
     return v;
   };
-  T.after.push((u, route) => { if (!LIVE) return; if (route !== 'patient') UI.liveChart = null; if (route !== 'audit') UI.liveAudit = null; if (route !== 'privacy') UI.livePrivacy = null; });
+  T.after.push((u, route) => { if (!LIVE) return; if (route !== 'patient') UI.liveChart = null; if (route !== 'audit') UI.liveAudit = null; if (route !== 'privacy') UI.livePrivacyOpened = false; });
   async function liveVerify() {
     const r = await store.api('GET', '/api/audit/verify');
     UI.chainResult = r.ok ? { ok: r.data.ok, n: r.data.checked, at: r.data.broken_at } : { ok: false, at: '?' };

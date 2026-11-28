@@ -92,6 +92,16 @@ Phase 4b adds the interfaces:
 - **Outbox:** pager, email and SMS messages that never carry patient identity.
 - **Privacy Sentinel:** runs on the real audit log.
 
+Phase 5a hardens it:
+
+- **Sign-in:** through Okta, Entra ID or any OpenID Connect provider, with PKCE and MFA asserted by the provider. Authenticator codes work once, and every route is rate limited.
+- **Audit log:** its head is signed into write-once storage every 5 minutes, so even a rebuilt chain is caught.
+- **Keys and backups:** master key rotation, encrypted backups, and a restore drill that proves the backup works.
+- **Monitoring:** health, readiness and metrics, with no health data in logs or metrics.
+- **Testing:** a security probe across every route, and a load test (about 1,100 requests a second, p95 under 90 ms).
+
+The threat model is in [`backend/SECURITY.md`](backend/SECURITY.md). Deploying to AWS is next.
+
 ## Credits
 
 3D anatomy: BodyParts3D, © The Database Center for Life Science, licensed under [CC Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/). Meshes were simplified and repacked by [`tools/build_anatomy.py`](tools/build_anatomy.py) (all 2,234 structures kept, 6.68M → 1.6M triangles) and are drawn by a small WebGL viewer in [`tessera/m-anatomy.js`](tessera/m-anatomy.js).

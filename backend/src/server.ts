@@ -10,7 +10,13 @@
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import { appPool, withAudit, auditOnly, type Actor } from './db.ts';
-import { kms, decText, decJson, openWithKek, blindIndex, verifyPassword, verifyTotp, newSessionToken, sessionHash } from './crypto.ts';
+import { kms, sealWithKek, decText, decJson, openWithKek, blindIndex, verifyPassword, totpStep, newSessionToken, sessionHash } from './crypto.ts';
+import { take } from './ratelimit.ts';
+import { LocalWorm, writeCheckpoint, verifyCheckpoints } from './worm.ts';
+export const auditKey = () => (env.AUDIT_SIGNING_KEY_HEX ? Buffer.from(env.AUDIT_SIGNING_KEY_HEX, 'hex') : null);
+export const worm = () => new LocalWorm(env.WORM_DIR);
+import { pkce, randomState, authorizeUrl, exchange, verifyIdToken } from './oidc.ts';
+import { metrics, logLine } from './observe.ts';
 import { env } from './env.ts';
 import { COLLS, ARRAY_COLLS, readable, check, RuleError, type Coll } from './records.ts';
 import { encField, newDek, patientToken } from './crypto.ts';
@@ -30,6 +36,29 @@ const AUDIT_ROLES = new Set(['admin', 'quality']);
 export function build() {
   const app = Fastify({ logger: false, trustProxy: true, bodyLimit: 512 * 1024 });
   app.register(cookie);
+  const routes: string[] = []; app.addHook('onRoute', (r) => { routes.push(`${Array.isArray(r.method) ? r.method.join(',') : r.method} ${r.url}`); }); (app as any).routesList = routes;
+
+  /* Rate limits (Phase 5): sign-in per address, the API per session or address, FHIR per token. */
+  app.addHook('onRequest', async (req: any, reply) => {
+    (req as any)._t0 = process.hrtime.bigint();
+    if (!env.RATE_LIMITS || req.url === '/api/health' || req.url === '/api/ready') return;
+    const kind = req.url.startsWith('/api/auth/') ? 'auth' : req.url.startsWith('/fhir/') ? 'fhir' : 'api';
+    const who = kind === 'fhir' && req.headers.authorization ? 'tok:' + sessionHash(String(req.headers.authorization)).toString('hex').slice(0, 16) : kind === 'api' && req.cookies?.tessera_sid ? 'sid:' + sessionHash(req.cookies.tessera_sid).toString('hex').slice(0, 16) : 'ip:' + req.ip;
+    const r = take(kind, who);
+    if (!r.ok) {
+      metrics.inc('rate_limited_total', { kind });
+      if (r.auditNow) await auditOnly(null, req.ip, { action: 'rate-limited', outcome: 'denied', detail: `${kind} limit for ${who.slice(0, 4)}…` });
+      return reply.code(429).header('Retry-After', String(r.retryAfter)).send({ error: 'Too many requests. Try again shortly.' });
+    }
+  });
+  /* One structured log line per request: route template, status, time, role. Never an id, a query
+     string or a body, so no health data reaches the logs. */
+  app.addHook('onResponse', async (req: any, reply) => {
+    const ms = Number(process.hrtime.bigint() - ((req as any)._t0 || process.hrtime.bigint())) / 1e6;
+    const route = req.routeOptions?.url || 'unmatched';
+    metrics.inc('http_requests_total', { route, status: String(reply.statusCode) }); metrics.observe('http_request_ms', ms, { route });
+    logLine({ msg: 'request', method: req.method, route, status: reply.statusCode, ms: Math.round(ms * 10) / 10 });
+  });
 
   // Security headers, CORS for the app origin only, CSRF header on writes
   app.addHook('onRequest', async (req, reply) => {
@@ -70,7 +99,41 @@ export function build() {
   const publicUser = (s: any) => ({ id: s.id, name: s.role === "patient" ? null : s.name /* portal names come from the encrypted record via /api/bootstrap */, username: s.username, role: s.role, dept: s.dept, unit: s.unit, title: s.title, patientId: s.patient_id });
 
   /* ---------- sign-in: password, then authenticator code ---------- */
+  /* ---------- sign-in through the identity provider (Phase 5) ---------- */
+  const oidcCfg = () => ({ issuer: env.OIDC_ISSUER, clientId: env.OIDC_CLIENT_ID, clientSecret: env.OIDC_CLIENT_SECRET, redirect: env.OIDC_REDIRECT });
+  app.get('/api/auth/config', async () => ({ oidc: !!env.OIDC_ISSUER, issuer: env.OIDC_ISSUER ? new URL(env.OIDC_ISSUER).host : null }));
+  app.get('/api/auth/oidc/start', async (_req: any, reply) => {
+    if (!env.OIDC_ISSUER) return reply.code(404).send({ error: 'No identity provider is configured.' });
+    const state = randomState(), nonce = randomState(), { verifier, challenge } = pkce();
+    await appPool.query("delete from app.oidc_pending where created_at < now() - interval '10 minutes'");
+    await appPool.query('insert into app.oidc_pending (state_hash, nonce, verifier_enc) values ($1,$2,$3)', [sessionHash(state), nonce, sealWithKek(verifier)]);
+    return reply.redirect(await authorizeUrl(oidcCfg(), state, nonce, challenge), 302);
+  });
+  app.get('/api/auth/oidc/callback', async (req: any, reply) => {
+    const dev = env.PRODUCTION ? '' : `&api=${encodeURIComponent(`http://localhost:${env.API_PORT}`)}`; // deployed builds set TESSERA_CONFIG.apiBase instead
+    const back = (err?: string) => reply.redirect(env.APP_ORIGIN + '/?mode=live' + dev + (err ? `&signin_error=${encodeURIComponent(err)}` : '#home'), 302);
+    if (!env.OIDC_ISSUER) return reply.code(404).send({ error: 'No identity provider is configured.' });
+    const { code, state, error } = req.query || {};
+    const p = state ? (await appPool.query("delete from app.oidc_pending where state_hash = $1 and created_at > now() - interval '10 minutes' returning nonce, verifier_enc", [sessionHash(String(state))])).rows[0] : null;
+    const deny = async (why: string, u?: any) => { await auditOnly(u ? { id: u.id, role: u.role } : null, req.ip, { action: 'sign-in', outcome: 'denied', detail: `identity provider: ${why}`.slice(0, 200) }); return back('denied'); };
+    if (error) return deny(`provider returned ${String(error).slice(0, 40)}`);
+    if (!p) return deny('unknown or expired sign-in (state)');
+    let claims: any;
+    try { claims = await verifyIdToken(oidcCfg(), await exchange(oidcCfg(), String(code || ''), openWithKek(p.verifier_enc)), p.nonce); }
+    catch (e) { return deny((e as Error).message); }
+    const name = String(claims[env.OIDC_USER_CLAIM] || claims.email || '').toLowerCase().replace(/@.*$/, '');
+    const u = (await appPool.query('select * from app.users where lower(username) = $1', [name])).rows[0];
+    if (!u) return deny(`no Tessera account for "${name.slice(0, 40)}"`);
+    if (u.status !== 'active') return deny('account suspended', u);
+    const token = newSessionToken();
+    await appPool.query("insert into app.sessions (id_hash, user_id, stage, expires_at, ip, ua) values ($1,$2,'active', now() + interval '12 hours', $3, $4)", [sessionHash(token), u.id, req.ip, String(req.headers['user-agent'] || '').slice(0, 200)]);
+    await auditOnly({ id: u.id, role: u.role }, req.ip, { action: 'sign-in', outcome: 'success', detail: `identity provider ${new URL(env.OIDC_ISSUER).host} · amr ${(claims.amr || []).join(',')}` });
+    setCookie(reply, token);
+    return back();
+  });
+
   app.post('/api/auth/password', async (req: any, reply) => {
+    if (env.OIDC_ISSUER) return reply.code(403).send({ error: 'Sign in through your organisation\'s identity provider.' });
     const { username, password } = req.body || {};
     const { rows } = await appPool.query('select * from app.users where username = $1', [String(username || '')]);
     const u = rows[0];
@@ -90,12 +153,15 @@ export function build() {
 
   app.post('/api/auth/mfa', async (req: any, reply) => {
     const s = await session(req, 'password'); if (!s || s.stage !== 'password') return reply.code(401).send({ error: 'Start again with your password.' });
-    const { rows } = await appPool.query('select totp_secret_enc from app.users where id = $1', [s.id]);
-    if (!verifyTotp(openWithKek(rows[0].totp_secret_enc), String((req.body || {}).code || ''))) {
+    const { rows } = await appPool.query('select totp_secret_enc, totp_last_step from app.users where id = $1', [s.id]);
+    const step = totpStep(openWithKek(rows[0].totp_secret_enc), String((req.body || {}).code || ''));
+    const reused = step !== null && step <= Number(rows[0].totp_last_step) && !(env.ALLOW_TOTP_REUSE && !env.PRODUCTION);
+    if (step === null || reused) {
       await appPool.query('update app.users set failed_logins = failed_logins + 1, locked_until = case when failed_logins + 1 >= 5 then now() + interval \'15 minutes\' else locked_until end where id = $1', [s.id]);
-      await auditOnly(actor(s), req.ip, { action: 'sign-in', outcome: 'denied', detail: 'wrong authenticator code' });
-      return reply.code(401).send({ error: 'That code is not right. Codes change every 30 seconds.' });
+      await auditOnly(actor(s), req.ip, { action: 'sign-in', outcome: 'denied', detail: reused ? 'authenticator code already used' : 'wrong authenticator code' });
+      return reply.code(401).send({ error: reused ? 'That code was already used. Wait for the next one.' : 'That code is not right. Codes change every 30 seconds.' });
     }
+    await appPool.query('update app.users set totp_last_step = greatest(totp_last_step, $2) where id = $1', [s.id, step]); // each code works once
     // Rotate the token at privilege change so a pre-MFA token can never become a full session
     await appPool.query('update app.sessions set revoked_at = now() where id_hash = $1', [s.id_hash]);
     const token = newSessionToken();
@@ -251,15 +317,21 @@ export function build() {
     if (!AUDIT_ROLES.has(s.role)) { await auditOnly(actor(s), req.ip, { action: 'view-audit', outcome: 'denied' }); return reply.code(403).send({ error: 'Not permitted.' }); }
     return withAudit(actor(s), req.ip, async (c, audit) => {
       const lim = Math.min(500, Math.max(1, +(req.query.limit || 100)));
-      const { rows } = await c.query('select seq, ts, actor, role, action, resource, patient_token, purpose, outcome, detail, hash from audit.log order by seq desc limit $1', [lim]);
-      audit({ action: 'view-audit', detail: `${rows.length} rows` }); // reading the audit log is itself audited
+      const q = String(req.query.q || '').slice(0, 80), act = String(req.query.action || '').slice(0, 40);
+      const { rows } = await c.query("select seq, ts, actor, role, action, resource, patient_token, purpose, outcome, detail, hash from audit.log where ($2 = '' or action = $2) and ($3 = '' or actor ilike '%' || $3 || '%' or action ilike '%' || $3 || '%' or patient_token ilike '%' || $3 || '%' or detail ilike '%' || $3 || '%') order by seq desc limit $1", [lim, act, q]);
+      audit({ action: 'view-audit', detail: `${rows.length} rows${act || q ? ' (filtered)' : ''}` }); // reading the audit log is itself audited
       return { events: rows };
     });
   });
   app.get('/api/audit/verify', async (req: any, reply) => {
     const s = await requireUser(req, reply); if (!s) return;
     if (!AUDIT_ROLES.has(s.role)) return reply.code(403).send({ error: 'Not permitted.' });
-    return withAudit(actor(s), req.ip, async (c, audit) => { const r = (await c.query('select * from audit.verify()')).rows[0]; audit({ action: 'verify-audit-chain', detail: r.ok ? `intact (${r.checked})` : `broken at ${r.broken_at}` }); return r; });
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const r = (await c.query('select * from audit.verify()')).rows[0];
+      const cp = auditKey() ? await verifyCheckpoints(c, worm(), auditKey()!) : null; // the chain against the signed write-once checkpoints
+      audit({ action: 'verify-audit-chain', detail: (r.ok ? `intact (${r.checked})` : `broken at ${r.broken_at}`) + (cp ? ` · ${cp.checkpoints} checkpoints ${cp.ok ? 'match' : 'MISMATCH'}` : '') });
+      return { ...r, checkpoints: cp };
+    });
   });
 
   /* ---------- bootstrap for the app's live adapter ----------
@@ -378,8 +450,8 @@ export function build() {
   const IDENTITY = ['name', 'dob', 'mrn', 'phone', 'payer', 'memberId'], ADT = ['unit', 'bed', 'status', 'dept', 'consults', 'age', 'attending'];
   async function writeOne(s: any, ip: string, w: any) {
     const coll = w && w.coll as Coll, key = String((w && w.key) || ''), pid = String((w && w.patient) || '');
-    const base = { coll, key };
     const pol = POLICY[coll];
+    const base = pol ? { coll, key: key.slice(0, 160) } : {}; // never echo an unknown collection or key back
     if (!pol || !key || key.length > 160) return { ...base, ok: false, status: 400, error: 'Bad write.' };
     if (!pol.write.includes(s.role)) { await auditOnly(actor(s), ip, { action: `write-${coll}`, resource: key, outcome: 'denied', detail: `role ${s.role}` }); return { ...base, ok: false, status: 403, error: 'Your role cannot change this.' }; }
     const uname = (await appPool.query('select name from app.users where id = $1', [s.id])).rows[0].name;
@@ -626,6 +698,7 @@ export function build() {
   /* ---------- Privacy Sentinel (Phase 4b) ----------
      Rules over the real audit log. The privacy officer (administrator) sees tokens; naming a patient
      needs a written reason and is itself audited. */
+  let scan: { at: number; alerts: any[]; events: number } | null = null; // the last scan, kept a minute
   async function privacyCtx(c: any) {
     const k = await orgKey(c);
     const cfg = Object.fromEntries((await c.query("select key, body_enc from app.ops where coll = 'privacyConfig'")).rows.map((r: any) => [r.key, decJson(k, r.body_enc)]));
@@ -639,10 +712,18 @@ export function build() {
     const s = await requireUser(req, reply); if (!s) return;
     if (s.role !== 'admin') { await auditOnly(actor(s), req.ip, { action: 'privacy-scan', outcome: 'denied' }); return reply.code(403).send({ error: 'Not permitted.' }); }
     return withAudit(actor(s), req.ip, async (c, audit) => {
-      const rows = (await c.query("select seq, ts, actor, role, action, resource, patient_token, outcome, detail, purpose from audit.log where ts > now() - interval '30 days' order by seq")).rows;
-      const alerts = analyse(rows, await privacyCtx(c));
-      audit({ action: 'privacy-scan', detail: `${rows.length} events, ${alerts.length} alerts` });
-      return { alerts };
+      const fresh = req.query.refresh === '1' || !scan || Date.now() - scan.at > 60000;
+      if (fresh) {
+        // Only rows a rule can use: denials, emergency access, chart and FHIR reads, writes, reveals, and
+        // non-clinical census rows (for the after-hours rule). Clinicians' census rows, the bulk of the
+        // log, are left out. Indexed by time.
+        const rows = (await c.query(`select seq, ts, actor, role, action, resource, patient_token, outcome, detail, purpose from audit.log
+          where ts > now() - interval '30 days' and (outcome = 'denied' or action in ('break-the-glass', 'view-chart', 'fhir-read', 'phi-reveal') or action like 'write-%'
+            or (action = 'census' and role not in ('doctor', 'nurse', 'pharmacist', 'patient'))) order by seq`)).rows;
+        scan = { at: Date.now(), alerts: analyse(rows, await privacyCtx(c)), events: rows.length };
+      }
+      audit({ action: 'privacy-scan', detail: `${scan!.events} relevant events, ${scan!.alerts.length} alerts${fresh ? '' : ' (cached)'}` });
+      return { alerts: scan!.alerts, scannedAt: new Date(scan!.at).toISOString() };
     });
   });
   app.post('/api/privacy/reveal', async (req: any, reply) => {
@@ -661,12 +742,32 @@ export function build() {
   });
 
   app.get('/api/health', async () => ({ ok: true }));
+  /* Readiness: the database answers, the key service unwraps, and the audit chain head is readable. */
+  app.get('/api/ready', async (_req, reply) => {
+    const checks: Record<string, boolean> = {};
+    try { await appPool.query('select 1'); checks.database = true; } catch { checks.database = false; }
+    try { const c = await appPool.connect(); try { await orgKey(c); checks.keys = true; } finally { c.release(); } } catch { checks.keys = false; }
+    try { await appPool.query('select max(seq) from audit.log'); checks.audit = true; } catch { checks.audit = false; }
+    const ok = Object.values(checks).every(Boolean);
+    return reply.code(ok ? 200 : 503).send({ ok, checks });
+  });
+  /* Metrics in Prometheus text format: counts and timings by route template and status, no ids.
+     Needs METRICS_TOKEN (scraper) or an administrator session. */
+  app.get('/api/metrics', async (req: any, reply) => {
+    const tok = process.env.METRICS_TOKEN;
+    const okTok = tok && req.headers.authorization === `Bearer ${tok}`;
+    if (!okTok) { const s = await session(req, 'active'); if (!s || s.role !== 'admin') return reply.code(403).send({ error: 'Not permitted.' }); }
+    return reply.header('Content-Type', 'text/plain; version=0.0.4').send(metrics.render());
+  });
   app.setErrorHandler((err, _req, reply) => { if (!err.statusCode || err.statusCode >= 500) console.error('[api error]', err.message); reply.code(err.statusCode && err.statusCode < 500 ? err.statusCode : 500).send({ error: err.statusCode && err.statusCode < 500 ? err.message : 'Something went wrong. Nothing was changed.' }); });
   return app;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const app = build();
-  await app.listen({ port: env.API_PORT, host: 'localhost' }); // same site as the app on localhost, so the SameSite=Strict cookie is sent
+  await app.listen({ port: env.API_PORT, host: 'localhost' });
+  // Signed write-once checkpoint of the audit chain every 5 minutes
+  const cp = async () => { try { if (auditKey()) await writeCheckpoint(appPool, worm(), auditKey()!); } catch (e) { logLine({ msg: 'audit checkpoint failed', error: (e as Error).message }); } };
+  await cp(); setInterval(cp, 5 * 60000).unref(); // same site as the app on localhost, so the SameSite=Strict cookie is sent
   console.log(`Tessera API on http://localhost:${env.API_PORT} (app origin ${env.APP_ORIGIN})`);
 }

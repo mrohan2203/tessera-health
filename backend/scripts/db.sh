@@ -24,6 +24,6 @@ case "$1" in
     $PG/pg_ctl -D $DATA -l $DATA/server.log -w start >/dev/null && echo "postgres running on localhost:$PORT"
     ;;
   stop) $PG/pg_ctl -D $DATA -w stop >/dev/null && echo "postgres stopped" ;;
-  reset) $PG/pg_ctl -D $DATA -w stop >/dev/null 2>&1 || true; rm -rf $DATA; echo "data removed (secrets in $ENVF kept)" ;;
+  reset) $PG/pg_ctl -D $DATA -w stop >/dev/null 2>&1 || true; rm -rf $DATA; chmod -R u+w "$(dirname "$0")/../.worm" 2>/dev/null; rm -rf "$(dirname "$0")/../.worm"; echo "data and development audit checkpoints removed (secrets in $ENVF kept)" ;;
   *) echo "usage: db.sh start|stop|reset"; exit 1 ;;
 esac

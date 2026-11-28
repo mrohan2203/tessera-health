@@ -9,6 +9,8 @@ import { build } from '../src/server.ts';
 import { appPool } from '../src/db.ts';
 import { totp } from '../src/crypto.ts';
 import { env } from '../src/env.ts';
+// These suites sign the same accounts in many times a minute; hardening.test.ts covers both protections
+env.ALLOW_TOTP_REUSE = true; env.RATE_LIMITS = false; process.env.TESSERA_QUIET = '1';
 
 const root = new URL('..', import.meta.url).pathname;
 let creds: any = {};

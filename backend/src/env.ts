@@ -18,5 +18,20 @@ export const env = {
   APP_ORIGIN: get('APP_ORIGIN', 'http://localhost:8765'),
   PRODUCTION: get('NODE_ENV', 'development') === 'production',
   IDLE_MINUTES: +get('IDLE_MINUTES', '15'),
-  BTG_HOURS: +get('BTG_HOURS', '4')
+  BTG_HOURS: +get('BTG_HOURS', '4'),
+  // Development only: lets automated tests sign the same account in several times within 30 seconds.
+  // Ignored when NODE_ENV=production.
+  ALLOW_TOTP_REUSE: get('ALLOW_TOTP_REUSE', '0') === '1',
+  RATE_LIMITS: get('RATE_LIMITS', '1') !== '0' || get('NODE_ENV', 'development') === 'production', // can be switched off for local automation only
+  // Sign-in through an identity provider (Okta, Entra ID or any OpenID Connect issuer). When set, the
+  // password and authenticator sign-in is switched off.
+  OIDC_ISSUER: get('OIDC_ISSUER', ''),
+  OIDC_CLIENT_ID: get('OIDC_CLIENT_ID', ''),
+  OIDC_CLIENT_SECRET: get('OIDC_CLIENT_SECRET', ''),
+  OIDC_REDIRECT: get('OIDC_REDIRECT', 'http://localhost:8787/api/auth/oidc/callback'),
+  OIDC_USER_CLAIM: get('OIDC_USER_CLAIM', 'preferred_username'),
+  // Write-once audit checkpoints: where they go (a directory locally; an S3 bucket with Object Lock in
+  // production) and the key that signs them (kept apart from the database).
+  WORM_DIR: get('WORM_DIR', new URL('../.worm/', import.meta.url).pathname),
+  AUDIT_SIGNING_KEY_HEX: get('AUDIT_SIGNING_KEY_HEX', ''),
 };

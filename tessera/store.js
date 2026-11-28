@@ -114,7 +114,7 @@
   }
 
   window.TesseraStore = {
-    get info() { return adapter.info; }, notice, live: adapter.info.mode === 'live',
+    get info() { return adapter.info; }, notice, live: adapter.info.mode === 'live', apiBase: adapter.apiBase || '',
     api: (m, p, b) => (adapter.api ? adapter.api(m, p, b) : Promise.reject(new Error('demo mode has no API'))),
     pendingSignOut: adapter.pendingSignOut || { get: () => false, set: () => {} },
     loadState: () => adapter.loadState(), saveState: (s) => { const t = tracing; tracing = false; try { adapter.saveState(s); } finally { tracing = t; } }, resetState: () => adapter.resetState(),
