@@ -75,7 +75,7 @@ with sync_playwright() as pw:
     check(page.evaluate("Tessera.P('P01').phone") == '' and page.evaluate("Tessera.P('P01').problems.length") == 0, 'pharmacist gets medication profile only')
     signout(page)
     # receptionist: no patients
-    signin(page, 'sofia.frontdesk'); check(page.evaluate('Tessera.SEED.patients.length') == 0, 'front desk receives no clinical census')
+    signin(page, 'sofia.frontdesk'); check(page.evaluate("Tessera.SEED.patients.length > 0 && Tessera.SEED.patients.every(p => !p.problems.length && !p.meds.length && !p.allergies.length) && Tessera.S.notes.length === 0 && Tessera.S.orders.length === 0"), 'front desk gets demographics only, no clinical content')
     signout(page)
     # admin: server audit log, verify chain, review the grant
     signin(page, 'dana.admin'); page.goto(URL + '#audit'); page.wait_for_timeout(1200)
@@ -105,6 +105,7 @@ with sync_playwright() as pw:
     check('Live note: potassium 6.1' in page.inner_text('.content'), "the doctor's note reaches the nurse")
     signout(page)
     # crawl every menu page for every role in live mode
+    nc = []
     for user in CREDS:
         if user == 'ruth.peds':  # suspended account
             page.goto(URL); page.wait_for_selector('form[data-form="live-pw"]'); page.fill('#lg-user', user); page.fill('#lg-pass', CREDS[user]['password'])
@@ -115,8 +116,10 @@ with sync_playwright() as pw:
         for r in routes:
             page.goto(URL + '#' + r); page.wait_for_timeout(120)
             if len(errors) > before: print('  error on', user, r, errors[-1][:160]); before = len(errors)
+            if 'Not connected yet' in page.inner_text('#app'): nc.append(f'{user}:{r}')
         check(True, f'crawled {len(routes)} pages as {user}')
         signout(page)
+    check(not nc, f'every page is on the API (not connected: {nc})')
     b.close()
 print('page errors:', errors[:5])
 print('FAILED' if fails or errors else 'ALL PASS', len(fails))

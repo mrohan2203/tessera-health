@@ -798,7 +798,7 @@
     reject(f) { const o = S.orders.find((x) => x.id === f.o); o.status = 'Rejected by pharmacy'; o.intervention = f.text; UI.modal = null; audit('pharmacy-reject', { patient: P(o.patient), resource: o.id, detail: f.text }); save(); render(); toast('Rejected. Prescriber notified.'); },
     count(f) { const c = S.controlled[+f.i], u = me(); const qty = +f.qty; S.counts.push({ item: c.item, qty, expected: c.onHand, by: u.name, witness: f.witness, at: new Date().toISOString() }); c.lastCount = 0; c.onHand = qty; UI.modal = null; audit('controlled-count', { detail: `${c.item}: ${qty} (witness ${f.witness})` }); save(); render(); },
     query(f) { const c = S.claims.find((x) => x.id === f.c); UI.modal = null; audit('coding-query', { patient: P(c.patient), resource: c.id }); render(); toast('Query sent to the attending physician\'s inbox.'); },
-    identify(f) { UI.identified = { user: me().id, purpose: f.purpose }; UI.modal = null; audit('phi-reveal', { detail: `care gaps identified view · ${f.purpose}` }); render(); },
+    identify(f) { if (LIVE) liveFlight = liveFlight.then(() => liveReveal(f.purpose)).catch((e) => console.error(e)); UI.identified = { user: me().id, purpose: f.purpose }; UI.modal = null; audit('phi-reveal', { detail: `care gaps identified view · ${f.purpose}` }); render(); },
     afilter(f) { UI.auditFilter = { q: f.q || '', btg: !!f.btg }; render(); },
     role(f) {
       const x = U(f.u), [role, sc] = f.to.split(':');
@@ -849,21 +849,37 @@
      plans, rapid-response events, medication reconciliation and chart updates. save() sends what
      changed, with the version it was based on. A refused write is explained and that patient's
      records are reloaded from the server, so the screen never shows something the server rejected. */
-  const LIVE_COLLS = { orders: 'arr', results: 'arr', notes: 'arr', labOrders: 'arr', rrEvents: 'arr', mar: 'mar', verified: 'verified', vitalsLog: 'pt', carePlans: 'pt', medrec: 'pt', patientPatches: 'pt' };
+  /* Every collection the server holds, and how its items map to a patient (mirrors backend/src/policy.ts):
+     arr: array items with .patient · mar: "patient|drug|time" · verified: keyed by order · dcsum: keyed by
+     discharge · pt: keyed by patient · ops / opsobj: operational, no patient · scalar: a single value. */
+  const LIVE_COLLS = {};
+  'orders results notes labOrders rrEvents appts er ot daycare handovers pathways discharges tele rpm erx consents ambientNotes radOrders crossmatch reminders followups claims insCases hai docs assessments sdoh sdohRefs gfe familyMsgs portalRequests shares shareLog bedRequests'.split(' ').forEach((c) => { LIVE_COLLS[c] = 'arr'; });
+  'vitalsLog carePlans medrec patientPatches caseDrafts family'.split(' ').forEach((c) => { LIVE_COLLS[c] = 'pt'; });
+  'controlled counts roleRequests incidents assets workOrders orderSets bloodUnits donors processing tenants supportReq extracts'.split(' ').forEach((c) => { LIVE_COLLS[c] = 'ops'; });
+  'review gapsDone bedStatus config interop notifRead todos credReminders privacyCases'.split(' ').forEach((c) => { LIVE_COLLS[c] = 'opsobj'; });
+  Object.assign(LIVE_COLLS, { mar: 'mar', verified: 'verified', dcsum: 'dcsum', reviewSigned: 'scalar', forecastWhatIf: 'scalar' });
+  const isArr = (c) => LIVE_COLLS[c] === 'arr' || LIVE_COLLS[c] === 'ops';
+  const isOps = (c) => /^ops|scalar/.test(LIVE_COLLS[c]);
+  const itemKey = (x) => x && (x.id || x._k);
+  const userKey = (x) => JSON.stringify([x.role, x.dept || null, x.unit || null, x.status]);
+  let liveUsersSnap = new Map();
   let liveSnap = new Map(), liveVer = {}, liveBusy = new Set(), liveQueued = false;
   let liveFlight = Promise.resolve(), liveLogout = Promise.resolve(), liveEpoch = 0; // saves in order; sign-out waits for them; a new sign-in waits for sign-out
   T.liveIdle = () => liveFlight.then(() => liveLogout);
-  const ownerOf = (c, k, x) => LIVE_COLLS[c] === 'arr' ? x && x.patient : LIVE_COLLS[c] === 'mar' ? k.split('|')[0] : LIVE_COLLS[c] === 'verified' ? ((S.orders || []).find((o) => o.id === k) || {}).patient : k;
+  const ownerOf = (c, k, x) => { const t = LIVE_COLLS[c]; return t === 'arr' ? x && x.patient : t === 'mar' ? k.split('|')[0] : t === 'verified' ? ((S.orders || []).find((o) => o.id === k) || {}).patient : t === 'dcsum' ? ((S.discharges || []).find((d) => d.id === k) || {}).patient : t === 'pt' ? k : ''; };
   function liveEach(fn, onlyPid) {
     Object.keys(LIVE_COLLS).forEach((c) => {
+      if (onlyPid && isOps(c)) return;
+      if (LIVE_COLLS[c] === 'scalar') { fn(c, '_', S[c] === undefined ? null : S[c]); return; }
       const v = S[c]; if (!v) return;
-      if (LIVE_COLLS[c] === 'arr') v.forEach((x) => { if (x && x.id && (!onlyPid || x.patient === onlyPid)) fn(c, x.id, x); });
+      if (isArr(c)) v.forEach((x) => { const k = itemKey(x); if (k && (!onlyPid || x.patient === onlyPid)) fn(c, k, x); });
       else Object.keys(v).forEach((k) => { if (!onlyPid || ownerOf(c, k, v[k]) === onlyPid) fn(c, k, v[k]); });
     });
   }
+  const newKeys = () => Object.keys(LIVE_COLLS).forEach((c) => { if (isArr(c)) (S[c] || []).forEach((x) => { if (x && typeof x === 'object' && !x.id && !x._k) x._k = 'K-' + (Date.now().toString(36) + Math.random().toString(36).slice(2, 6)).toUpperCase(); }); });
   const applyPatches = (pid) => { const p = P(pid), f = (S.patientPatches || {})[pid]; if (p && f) Object.assign(p, clone(f)); };
   function liveInstall(d) {
-    Object.keys(LIVE_COLLS).forEach((c) => { S[c] = clone((d.records || {})[c] || (LIVE_COLLS[c] === 'arr' ? [] : {})); }); // roles with no census get none
+    Object.keys(LIVE_COLLS).forEach((c) => { const v = (d.records || {})[c]; S[c] = LIVE_COLLS[c] === 'scalar' ? (v === undefined ? null : clone(v)) : clone(v || (isArr(c) ? [] : {})); }); // roles with no census get none
     liveVer = Object.assign({}, d.versions); liveSnap = new Map(); liveBusy = new Set();
     liveEach((c, k, x) => liveSnap.set(c + '|' + k, JSON.stringify(x)));
     Object.keys(S.patientPatches).forEach(applyPatches);
@@ -871,13 +887,29 @@
   function liveMerge(pid, d) {
     liveEach((c, k) => liveSnap.delete(c + '|' + k), pid);
     Object.keys(LIVE_COLLS).forEach((c) => {
-      const inc = clone((d.records || {})[c] || (LIVE_COLLS[c] === 'arr' ? [] : {}));
-      if (LIVE_COLLS[c] === 'arr') S[c] = (S[c] || []).filter((x) => x.patient !== pid).concat(inc);
+      if (isOps(c)) return;
+      const inc = clone((d.records || {})[c] || (isArr(c) ? [] : {}));
+      if (isArr(c)) S[c] = (S[c] || []).filter((x) => x.patient !== pid).concat(inc);
       else { S[c] = S[c] || {}; Object.keys(S[c]).forEach((k) => { if (ownerOf(c, k, S[c][k]) === pid) delete S[c][k]; }); Object.assign(S[c], inc); }
     });
     Object.assign(liveVer, d.versions || {});
     liveEach((c, k, x) => liveSnap.set(c + '|' + k, JSON.stringify(x)), pid);
     applyPatches(pid);
+  }
+  function liveRevertOps(c, k, cur) {
+    const ck = c + '|' + k;
+    if (LIVE_COLLS[c] === 'scalar') S[c] = cur ? cur.body : null;
+    else if (isArr(c)) { const i = S[c].findIndex((x) => itemKey(x) === k); if (cur) { if (i >= 0) S[c][i] = cur.body; else S[c].push(cur.body); } else if (i >= 0) S[c].splice(i, 1); }
+    else if (cur) S[c][k] = cur.body; else delete S[c][k];
+    if (cur) { liveVer[ck] = cur.version; liveSnap.set(ck, JSON.stringify(cur.body)); } else { delete liveVer[ck]; liveSnap.delete(ck); }
+  }
+  async function liveReveal(purpose) {
+    const ids = [...new Set((SEED.gaps || []).map((g) => g.patient))];
+    const r = await store.api('POST', '/api/reveal', { ids, purpose });
+    if (r.status === 401) return liveExpired();
+    if (!r.ok) { toast(r.data.error || 'Names were not revealed.'); return; }
+    r.data.patients.forEach((x) => { const p = P(x.id); if (p) Object.assign(p, { name: x.name, mrn: x.mrn }); });
+    render();
   }
   function liveRefresh(pid) { liveFlight = liveFlight.then(() => liveRefreshNow(pid)).catch((e) => console.error(e)); }
   async function liveRefreshNow(pid) {
@@ -893,13 +925,28 @@
     liveFlight = liveFlight.then(() => new Promise((r) => queueMicrotask(r))).then(async () => {
       liveQueued = false;
       if (ep !== liveEpoch) return;
+      // 1. New patients are registered first, so records about them can follow
+      for (const p of (S.extraPatients || []).filter((x) => !x._stub && !x._saved && !x._sending)) {
+        p._sending = true;
+        const { _forced, _sending, ...body } = p;
+        const r = await store.api('POST', '/api/patients/register', { patient: body, force: !!_forced });
+        if (ep !== liveEpoch) return;
+        delete p._sending;
+        if (r.status === 401) return liveExpired();
+        if (r.ok) { Object.assign(p, { _saved: true, mrn: r.data.mrn, token: r.data.token, _access: p.unidentified ? 'care' : p._access }); }
+        else { toast('Not registered: ' + (r.data.error || 'refused')); S.extraPatients = S.extraPatients.filter((x) => x !== p); }
+      }
+      newKeys();
       const writes = [];
       liveEach((c, k, x) => {
         const ck = c + '|' + k, j = JSON.stringify(x);
         if (liveSnap.get(ck) === j || liveBusy.has(ck)) return;
-        const patient = ownerOf(c, k, x); if (!patient) return;
-        writes.push({ coll: c, key: k, patient, version: liveVer[ck] || 0, body: JSON.parse(j), _j: j });
+        const patient = isOps(c) ? '' : ownerOf(c, k, x); if (!isOps(c) && !patient) return;
+        if (!isOps(c) && (S.extraPatients || []).some((p) => p.id === patient && !p._saved && !p._stub)) return; // wait for its registration
+        writes.push({ coll: c, key: k, patient, version: liveVer[ck] || 0, body: j === undefined ? null : JSON.parse(j), _j: j });
       });
+      // 2. Account changes go last, after any role request they depend on
+      (S.users || []).forEach((x) => { const j = userKey(x); if (liveUsersSnap.has(x.id) && liveUsersSnap.get(x.id) !== j && !liveBusy.has('users|' + x.id)) writes.push({ coll: 'users', key: x.id, patient: '', version: 0, body: { role: x.role, dept: x.dept || null, unit: x.unit || null, status: x.status }, _j: j }); });
       if (!writes.length) return;
       writes.forEach((w) => liveBusy.add(w.coll + '|' + w.key));
       const refused = new Set(); let msg = '';
@@ -912,11 +959,16 @@
         res.forEach((x, n) => {
           const w = batch[n], ck = w.coll + '|' + w.key;
           liveBusy.delete(ck);
-          if (x.ok) { liveVer[ck] = x.version; liveSnap.set(ck, w._j); }
-          else { refused.add(w.patient); msg = msg || x.error; }
+          if (x.ok) { if (w.coll === 'users') liveUsersSnap.set(w.key, w._j); else { liveVer[ck] = x.version; liveSnap.set(ck, w._j); } }
+          else {
+            msg = msg || x.error;
+            if (w.coll === 'users') { const v = U(w.key), b = (x.current || {}).body; if (v && b) { Object.assign(v, { role: b.role, dept: b.dept || undefined, unit: b.unit || undefined, status: b.status }); liveUsersSnap.set(w.key, userKey(v)); } }
+            else if (isOps(w.coll)) liveRevertOps(w.coll, w.key, x.current);
+            else refused.add(w.patient);
+          }
         });
       }
-      if (refused.size) { toast('Not saved: ' + msg); refused.forEach((pid) => liveRefresh(pid)); }
+      if (msg) { toast('Not saved: ' + msg); refused.forEach((pid) => liveRefresh(pid)); if (!refused.size) render(); }
       liveSync(); // anything changed while these were in flight
     }).catch((e) => console.error(e));
   }
@@ -937,14 +989,16 @@
     liveRestoreSeed(new Set());
     S = withModules(freshState());
     UI.live = { stage: 'password' }; UI.liveChart = null; UI.liveAudit = null;
-    liveSnap = new Map(); liveVer = {}; liveBusy = new Set(); liveEpoch++;
+    liveSnap = new Map(); liveVer = {}; liveBusy = new Set(); liveUsersSnap = new Map(); liveEpoch++;
   }
   function liveLoad(d, how) {
     const ids = new Set(d.patients.map((p) => p.id));
     liveRestoreSeed(ids);
     SEED.patients.splice(0, SEED.patients.length, ...d.patients.map(livePatient));
     S = withModules(freshState());
-    S.config = Object.assign(S.config || {}, { idleMin: d.config.idleMinutes, btgHours: d.config.btgHours });
+    if (!S.config) S.config = { idleMin: d.config.idleMinutes, btgHours: d.config.btgHours }; // the server's configuration record is the source; never write it from here
+    (d.users || []).forEach((x) => { const v = U(x.id); if (v) Object.assign(v, { role: x.role, dept: x.dept || undefined, unit: x.unit || undefined, title: x.title || v.title, status: x.status }, x.name ? { name: x.name } : {}); else S.users.push(Object.assign({}, x, { name: x.name || 'Patient' })); });
+    liveUsersSnap = new Map(S.users.map((x) => [x.id, userKey(x)]));
     liveInstall(d);
     S.btg = (d.btg || []).map((g, i) => ({ id: 'BTG-L' + i, user: d.user.id, patient: g.patient_id, reason: g.reason, text: g.justification, at: g.granted_at, expires: g.expires_at, reviewed: false }));
     let u = U(d.user.id);

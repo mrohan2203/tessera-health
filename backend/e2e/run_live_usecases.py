@@ -12,12 +12,10 @@ def totp(secret):
     return str((struct.unpack('>I', h[o:o+4])[0] & 0x7fffffff) % 1000000).zfill(6)
 # Workflows that cannot pass in live mode yet, and why. Anything else failing is a regression.
 DEMO_ONLY = ['Password sign-in with MFA', 'Wrong password is rejected', 'Suspended account is blocked',  # demo sign-in screen; live sign-in is covered by live_test.py
-             'Data layer: demo adapter', 'Break-the-glass reviewed in audit log',  # demo storage and demo audit list; live equivalents in live_test.py
+             'Data layer: demo adapter',  # demo storage; the live adapter is covered by live_test.py
              'Care plan: accept suggestions']  # the test rewrites a result's history locally, which the server correctly refuses
-PHASE_4 = ['Role change needs a second', 'Portal refill', 'ER: triage', 'Discharge: insurance', 'Lab: normal autoverifies', 'Radiology: contrast', 'Blood: crossmatch',
-           'Registration catches', 'Double booking', 'Check-in starts', 'Social-needs safety', 'Claims: eligibility', 'Good faith estimate', 'Care gaps de-identified',
-           'NHSN reporting', 'Privacy Sentinel', 'Config: duplicate check', 'Platform support access']  # modules whose state is not on the API yet
-EXPECTED = DEMO_ONLY + PHASE_4
+PHASE_4B = ['Privacy Sentinel']  # analyses the audit trail; in live mode this runs on the server's audit log (Phase 4b)
+EXPECTED = DEMO_ONLY + PHASE_4B
 with sync_playwright() as pw:
     b = pw.chromium.launch(args=["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
     p = b.new_page(viewport={"width": 1440, "height": 900}); errs = []
@@ -28,7 +26,7 @@ with sync_playwright() as pw:
     r = p.evaluate("import('/tests/usecases.js?' + Date.now()).then(async m => { const r = await m.run(); await Tessera.liveIdle(); await new Promise(x => setTimeout(x, 1500)); return r; })")
     unexpected = [f for f in r['failed'] if not any(f.startswith(x) for x in EXPECTED)]
     print(json.dumps({'total': r['total'], 'passed': r['passed'], 'expected_failures': len(r['failed']) - len(unexpected), 'unexpected': len(unexpected)}))
-    for f in unexpected: print("FAIL", f[:230])
+    for f in (r["failed"] if "--all" in sys.argv else unexpected): print("FAIL", f[:230])
     print('REFUSALS', len(p.evaluate('window.__refusals')))
     for x in sorted(set(p.evaluate('window.__refusals'))): print('  ', x[:230])
     errs = [e for e in errs if 'Failed to load resource' not in e]  # refused requests are part of the tests

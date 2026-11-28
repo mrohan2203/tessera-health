@@ -83,6 +83,8 @@ Phase 2 is done locally: a real API and database in [`backend/`](backend/) with 
 
 Phase 3 is done locally too. The clinical record (orders, results, notes, lab orders, eMAR, pharmacist verification, vitals, care plans, rapid-response records and medication reconciliation) is stored encrypted on the server, with every version kept. The server enforces the clinical rules: allergy blocks need a doctor's override, signed notes and charted doses can't change, vitals are range-checked, and each role writes only what it may.
 
+Phase 4a puts the rest of the app on the server: front desk, ER registration, lab, radiology, blood bank, billing, insurance, theatre, quality, the admin tools and the portal. Every role gets only the slice of each patient its job needs, and care relationships follow the patient through admission and transfer. The server enforces the cross-department rules: no double-booking, critical labs released only by a pathologist, the contrast check, the two-person blood issue, and separation of duties for role changes. In live mode, every screen for every role now runs on the API.
+
 ## Credits
 
 3D anatomy: BodyParts3D, © The Database Center for Life Science, licensed under [CC Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/). Meshes were simplified and repacked by [`tools/build_anatomy.py`](tools/build_anatomy.py) (all 2,234 structures kept, 6.68M → 1.6M triangles) and are drawn by a small WebGL viewer in [`tessera/m-anatomy.js`](tessera/m-anatomy.js).

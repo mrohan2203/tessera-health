@@ -113,7 +113,8 @@ test('vitals: append-only and range-checked; current vitals patch limited to cha
   assert.match((await write(RN, { coll: 'vitalsLog', key: P, patient: P, version: 1, body: [{ ...v1[0], hr: 60 }] })).error, /cannot be edited/);
   assert.equal((await write(PH, { coll: 'vitalsLog', key: P, patient: P, version: 1, body: v1 })).status, 403);
   assert.ok((await write(RN, { coll: 'patientPatches', key: P, patient: P, version: 0, body: { vitals: { bp: '128/78', hr: 90, rr: 18, temp: 98.4, spo2: 96 } } })).ok);
-  assert.match((await write(RN, { coll: 'patientPatches', key: P, patient: P, version: 1, body: { vitals: { bp: '128/78', hr: 90 }, bed: 'CICU-9' } })).error, /Phase 4/);
+  assert.equal((await write(RN, { coll: 'patientPatches', key: P, patient: P, version: 1, body: { vitals: { bp: '128/78', hr: 90, rr: 18, temp: 98.4, spo2: 96 }, phone: '4155550000' } })).status, 403, 'nurse changed a phone number (front desk only)');
+  assert.match((await write(RN, { coll: 'patientPatches', key: P, patient: P, version: 1, body: { vitals: { bp: '128/78', hr: 90 }, favouriteColour: 'blue' } })).error, /not a chart field/);
   assert.equal((await write(RN, { coll: 'patientPatches', key: P, patient: P, version: 1, body: { vitals: { bp: '128/78', hr: 90 }, code: 'DNR' } })).status, 403, 'nurse changed code status');
 });
 

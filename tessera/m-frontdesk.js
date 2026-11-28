@@ -59,7 +59,7 @@
   };
   function createPatient(f) {
     const n = S().extraPatients.length; const age = new Date().getFullYear() - +f.dob.slice(0, 4);
-    const p = { id: 'R' + (100 + n), mrn: String(103100 + n), name: `${f.first.trim()} ${f.last.trim()}`, age, sex: f.sex, dob: f.dob, phone: f.phone, dept: 'GMED', consults: [], unit: null, bed: null, status: 'Outpatient', attending: 'U-2002', payer: f.payer, memberId: f.member || '', code: 'Full code', weightKg: 0, heightCm: 0, allergies: [], problems: ['New patient — intake pending'], vitals: { bp: '—', hr: '—', rr: '—', temp: '—', spo2: '—' }, meds: [], labs: [], bloodGroup: 'Unknown' };
+    const p = { id: T.store && T.store.live ? T.nid('R') : 'R' + (100 + n), mrn: String(103100 + n), _forced: !!f.forced, /* live: unique id; the server issues the MRN */ name: `${f.first.trim()} ${f.last.trim()}`, age, sex: f.sex, dob: f.dob, phone: f.phone, dept: 'GMED', consults: [], unit: null, bed: null, status: 'Outpatient', attending: 'U-2002', payer: f.payer, memberId: f.member || '', code: 'Full code', weightKg: 0, heightCm: 0, allergies: [], problems: ['New patient — intake pending'], vitals: { bp: '—', hr: '—', rr: '—', temp: '—', spo2: '—' }, meds: [], labs: [], bloodGroup: 'Unknown' };
     S().extraPatients.push(p); audit('mpi-register', { patient: p, detail: f.forced ? 'duplicate warning overridden' : 'no duplicate found' }); save(); return p;
   }
   Object.assign(FORMS, {

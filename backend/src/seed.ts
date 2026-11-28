@@ -10,6 +10,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { ownerPool } from './db.ts';
 import { kms, newDek, encField, blindIndex, hashPassword, newTotpSecret, sealWithKek, patientToken } from './crypto.ts';
+import { POLICY } from './policy.ts';
+import { relationsFor } from './care.ts';
 
 const root = new URL('../../tessera/', import.meta.url);
 const ctx: any = { window: {}, console };
@@ -19,7 +21,7 @@ const SEED = ctx.window.TESSERA_SEED;
 
 const db = ownerPool(); const c = await db.connect();
 await c.query('begin');
-await c.query('truncate app.record_versions, app.records, app.sessions, app.btg_grants, app.care_relationships, app.patients, app.users cascade');
+await c.query('truncate app.ops_versions, app.ops, app.keys, app.record_versions, app.records, app.sessions, app.btg_grants, app.care_relationships, app.patients, app.users cascade');
 
 const creds: Record<string, { password: string; totpSecret: string; role: string; name: string }> = {};
 for (const u of SEED.users) {
@@ -33,38 +35,53 @@ for (const u of SEED.users) {
 for (const p of SEED.patients) {
   const dek = newDek();
   const clinical = { problems: p.problems, allergies: p.allergies, allergiesUnknown: !!p.allergiesUnknown, vitals: p.vitals, meds: p.meds, labs: p.labs, weightKg: p.weightKg, heightCm: p.heightCm };
-  await c.query(`insert into app.patients (id, token, dek_wrapped, name_enc, dob_enc, mrn_enc, phone_enc, member_id_enc, payer_enc, clinical_enc, name_idx, mrn_idx, age, sex, dept, consults, unit, bed, status, code, attending)
-    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
-    [p.id, patientToken(p.mrn), kms.wrap(dek), encField(dek, p.name), encField(dek, p.dob), encField(dek, p.mrn), encField(dek, p.phone), encField(dek, p.memberId), encField(dek, p.payer), encField(dek, clinical),
-      blindIndex(p.name), blindIndex(p.mrn), p.age, p.sex, p.dept ?? null, p.consults ?? [], p.unit ?? null, p.bed ?? null, p.status ?? null, p.code ?? null, p.attending ?? null]);
+  await c.query(`insert into app.patients (id, token, dek_wrapped, name_enc, dob_enc, mrn_enc, phone_enc, member_id_enc, payer_enc, clinical_enc, name_idx, mrn_idx, dob_idx, age, sex, dept, consults, unit, bed, status, code, attending)
+    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+    [p.id, patientToken(p.mrn), kms.wrap(dek), encField(dek, p.name), encField(dek, p.dob), encField(dek, p.mrn), encField(dek, p.phone), encField(dek, p.memberId), encField(dek, p.payer), encField(dek, { ...clinical, bloodGroup: p.bloodGroup, unidentified: !!p.unidentified, alias: p.alias || '' }),
+      blindIndex(p.name), blindIndex(p.mrn), p.dob ? blindIndex('dob|' + p.dob) : null, p.age, p.sex, p.dept ?? null, p.consults ?? [], p.unit ?? null, p.bed ?? null, p.status ?? null, p.code ?? null, p.attending ?? null]);
 }
 
-// Care relationships, mirroring careRel() in tessera/app.js
-const groups = SEED.unitGroups || {};
+// Care relationships, with the same rules as careRel() in tessera/app.js (src/care.ts)
+const FIX = JSON.parse(readFileSync(new URL('../seed/initial-state.json', import.meta.url), 'utf8'));
 let n = 0;
-const rel = async (uid: string, pid: string, kind: string) => { await c.query('insert into app.care_relationships values ($1,$2,$3) on conflict do nothing', [uid, pid, kind]); n++; };
-for (const u of SEED.users) for (const p of SEED.patients) {
-  if (u.role === 'doctor') {
-    if (p.dept === u.dept) await rel(u.id, p.id, 'department');
-    if ((p.consults || []).includes(u.dept)) await rel(u.id, p.id, 'consult');
-    if (u.dept === 'EMER' && (SEED.er || []).some((e: any) => e.patient === p.id)) await rel(u.id, p.id, 'emergency');
-  }
-  if (u.role === 'nurse') {
-    if (p.unit && (p.unit === u.unit || (groups[u.unit] || []).includes(p.unit))) await rel(u.id, p.id, 'unit');
-    if (u.unit === 'PERIOP' && (SEED.ot || []).some((o: any) => o.patient === p.id)) await rel(u.id, p.id, 'theatre');
-  }
+for (const p of SEED.patients) for (const r of relationsFor(SEED.users, p, { unitGroups: FIX.unitGroups || {}, onEr: (FIX.er || []).some((e: any) => e.patient === p.id), inOt: (FIX.ot || []).some((o: any) => o.patient === p.id) })) {
+  await c.query('insert into app.care_relationships values ($1,$2,$3) on conflict do nothing', [r.user, p.id, r.kind]); n++;
 }
-// Clinical records (Phase 3), each encrypted under its patient's data key
+
+/* Records: the app's own starting state (seed/initial-state.json, made by tools/dump_initial_state.py).
+   Patient-linked items are encrypted under their patient's key; operational ones under the organisation
+   key. Items with no id get a stable _k so the app and the server agree on identity. */
 const deks = new Map<string, Buffer>();
 for (const p of SEED.patients) { const r = await c.query('select dek_wrapped from app.patients where id = $1', [p.id]); deks.set(p.id, kms.unwrap(r.rows[0].dek_wrapped)); }
-const attending = (pid: string) => SEED.patients.find((p: any) => p.id === pid)?.attending || SEED.users.find((u: any) => u.role === 'doctor').id;
-let nrec = 0;
+const orgDek = newDek();
+await c.query("insert into app.keys (name, wrapped) values ('ops', $1)", [kms.wrap(orgDek)]);
+const by = (pid?: string) => (pid && SEED.patients.find((p: any) => p.id === pid)?.attending) || SEED.users.find((u: any) => u.role === 'admin').id;
+const st = FIX.state;
+let nrec = 0, nops = 0;
 const rec = async (coll: string, key: string, pid: string, body: unknown) => {
   if (!deks.has(pid)) return;
-  await c.query('insert into app.records (coll, key, patient_id, body_enc, created_by, updated_by) values ($1,$2,$3,$4,$5,$5)', [coll, key, pid, encField(deks.get(pid)!, body), attending(pid)]); nrec++;
+  await c.query('insert into app.records (coll, key, patient_id, body_enc, created_by, updated_by) values ($1,$2,$3,$4,$5,$5)', [coll, key, pid, encField(deks.get(pid)!, body), by(pid)]); nrec++;
 };
-for (const coll of ['orders', 'results', 'notes', 'labOrders']) for (const x of SEED[coll] || []) await rec(coll, x.id, x.patient, x);
-for (const [k, v] of Object.entries(SEED.marCharted || {})) await rec('mar', k, k.split('|')[0], v);
+const op = async (coll: string, key: string, body: unknown) => {
+  await c.query('insert into app.ops (coll, key, body_enc, created_by, updated_by) values ($1,$2,$3,$4,$4)', [coll, key, encField(orgDek, JSON.stringify(body === undefined ? null : body)), by()]); nops++;
+};
+for (const [coll, pol] of Object.entries(POLICY)) {
+  const v = st[coll]; if (v === undefined) continue;
+  if (pol.scalar) { await op(coll, '_', v); continue; }
+  if (pol.arr) {
+    for (const [i, x0] of (v as any[]).entries()) {
+      const x = x0 && typeof x0 === 'object' && !x0.id ? { ...x0, _k: `${coll}-${i}` } : x0;
+      const key = x.id || x._k;
+      if (pol.pt) await rec(coll, key, x.patient, x); else await op(coll, key, x);
+    }
+    continue;
+  }
+  for (const [k, x] of Object.entries(v as any)) {
+    if (!pol.pt) { await op(coll, k, x); continue; }
+    const pid = pol.pt === 'key' ? k : pol.pt === 'mar' ? k.split('|')[0] : pol.pt === 'order' ? (st.orders || []).find((o: any) => o.id === k)?.patient : (st.discharges || []).find((d: any) => d.id === k)?.patient;
+    if (pid) await rec(coll, k, pid, x);
+  }
+}
 await c.query('commit'); c.release(); await db.end();
 writeFileSync(new URL('../.dev-credentials.json', import.meta.url), JSON.stringify(creds, null, 1), { mode: 0o600 });
-console.log(`seeded ${SEED.users.length} users, ${SEED.patients.length} patients, ${n} care relationships, ${nrec} clinical records; development credentials in backend/.dev-credentials.json (git-ignored)`);
+console.log(`seeded ${SEED.users.length} users, ${SEED.patients.length} patients, ${n} care relationships, ${nrec} patient records, ${nops} operational records; development credentials in backend/.dev-credentials.json (git-ignored)`);

@@ -155,7 +155,7 @@
         ${['Patient wristband matches the request (name, MRN, DOB)', 'Unit numbers match the crossmatch record', 'ABO/Rh compatible', 'Units in date and visually intact'].map((t, i) => `<label class="row" style="gap:8px"><input type="checkbox" name="c${i}" required> ${t}</label>`).join('')}
         <div class="field"><label for="bw">Second verifier</label><select id="bw" name="w" required><option value="">Choose</option>${others.map((v) => `<option>${esc(v.name)}</option>`).join('')}</select></div>` }); }
   });
-  FORMS['bb-issue'] = (f) => { const x = S().crossmatch.find((y) => y.id === f.x); x.state = 'Issued'; S().bloodUnits.filter((v) => (x.unitIds || []).includes(v.id)).forEach((v) => { v.issued = true; }); UI.modal = null; audit('bb-issue', { patient: P(x.patient), detail: `verified with ${f.w}` }); save(); render(); toast('Issued. Transfusion start time is charted on the eMAR.'); };
+  FORMS['bb-issue'] = (f) => { const x = S().crossmatch.find((y) => y.id === f.x); x.state = 'Issued'; x.issuedBy = me().name; x.verifiedBy = f.w; /* the server checks the second verifier */ S().bloodUnits.filter((v) => (x.unitIds || []).includes(v.id)).forEach((v) => { v.issued = true; }); UI.modal = null; audit('bb-issue', { patient: P(x.patient), detail: `verified with ${f.w}` }); save(); render(); toast('Issued. Transfusion start time is charted on the eMAR.'); };
 
   /* ---------- homes ---------- */
   T.HOME.lab = T.HOME.pathologist = (u) => {

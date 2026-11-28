@@ -13,7 +13,11 @@ import { appPool, withAudit, auditOnly, type Actor } from './db.ts';
 import { kms, decText, decJson, openWithKek, blindIndex, verifyPassword, verifyTotp, newSessionToken, sessionHash } from './crypto.ts';
 import { env } from './env.ts';
 import { COLLS, ARRAY_COLLS, readable, check, RuleError, type Coll } from './records.ts';
-import { encField } from './crypto.ts';
+import { encField, newDek, patientToken } from './crypto.ts';
+import { POLICY, ORG_ROLES, project, projectItem } from './policy.ts';
+import { relationsFor } from './care.ts';
+import { readFileSync } from 'node:fs';
+const UNIT_GROUPS: Record<string, string[]> = JSON.parse(readFileSync(new URL('../seed/initial-state.json', import.meta.url), 'utf8')).unitGroups || {};
 
 const COOKIE = 'tessera_sid';
 const PURPOSE: Record<string, string> = { doctor: 'Treatment', nurse: 'Treatment', pharmacist: 'Treatment', patient: 'Individual access', admin: 'Operations', quality: 'Operations' };
@@ -116,19 +120,44 @@ export function build() {
     return r.rows[0];
   };
 
-  /* Clinical records for the given patients, decrypted and filtered for the caller's role. */
-  async function loadRecords(c: any, role: string, pids: string[]) {
-    const out: any = { records: {}, versions: {} };
-    COLLS.forEach((k) => { out.records[k] = ARRAY_COLLS.has(k) ? [] : {}; });
-    if (!pids.length) return out;
-    const { rows } = await c.query('select r.coll, r.key, r.patient_id, r.version, r.body_enc, p.dek_wrapped from app.records r join app.patients p on p.id = r.patient_id where r.patient_id = any($1) order by r.created_at, r.key', [pids]);
-    const deks = new Map<string, Buffer>();
-    for (const r of rows) {
-      if (!deks.has(r.patient_id)) deks.set(r.patient_id, kms.unwrap(r.dek_wrapped));
-      const body = decJson(deks.get(r.patient_id)!, r.body_enc);
-      if (!readable(role, r.coll, body)) continue;
-      if (ARRAY_COLLS.has(r.coll)) out.records[r.coll].push(body); else out.records[r.coll][r.key] = body;
-      out.versions[`${r.coll}|${r.key}`] = r.version;
+  /* Records for the caller: patient-linked ones for the given patients (row-level security has already
+     limited the patients), and operational ones, all decrypted, filtered by policy and projected. */
+  // The organisation key is cached unwrapped, but re-checked on each use: if it was replaced (rotation,
+  // or a reseed in development) the new one is unwrapped instead of failing to decrypt
+  let opsDek: Buffer | null = null, opsWrapped: Buffer | null = null;
+  const orgKey = async (c: any) => {
+    const r = (await c.query("select wrapped from app.keys where name = 'ops'")).rows[0];
+    if (!r) throw new Error('organisation key missing: run the seed');
+    if (!opsWrapped || !opsWrapped.equals(r.wrapped)) { opsDek = kms.unwrap(r.wrapped); opsWrapped = r.wrapped; }
+    return opsDek!;
+  };
+  const emptyRecords = () => { const r: any = {}; COLLS.forEach((k) => { r[k] = POLICY[k].scalar ? null : ARRAY_COLLS.has(k) ? [] : {}; }); return r; };
+  async function loadRecords(c: any, s: any, pids: string[], withOps = true) {
+    const role = s.role;
+    const out: any = { records: emptyRecords(), versions: {} };
+    if (pids.length) {
+      const { rows } = await c.query('select r.coll, r.key, r.patient_id, r.version, r.body_enc, p.dek_wrapped from app.records r join app.patients p on p.id = r.patient_id where r.patient_id = any($1) order by r.ord', [pids]);
+      const deks = new Map<string, Buffer>();
+      for (const r of rows) {
+        if (!POLICY[r.coll]) continue;
+        if (!deks.has(r.patient_id)) deks.set(r.patient_id, kms.unwrap(r.dek_wrapped));
+        const raw = decJson(deks.get(r.patient_id)!, r.body_enc);
+        if (!readable(role, r.coll, raw)) continue;
+        const body = projectItem(role, r.coll, raw); if (body == null) continue;
+        if (ARRAY_COLLS.has(r.coll)) out.records[r.coll].push(body); else out.records[r.coll][r.key] = body;
+        out.versions[`${r.coll}|${r.key}`] = r.version;
+      }
+    }
+    if (withOps) {
+      const dek = await orgKey(c);
+      const { rows } = await c.query('select coll, key, version, body_enc from app.ops order by ord');
+      for (const r of rows) {
+        const pol = POLICY[r.coll]; if (!pol || !pol.read.includes(role)) continue;
+        if (pol.perUser && r.key !== s.id) continue;
+        const body = decJson(dek, r.body_enc);
+        if (pol.scalar) out.records[r.coll] = body; else if (pol.arr) out.records[r.coll].push(body); else out.records[r.coll][r.key] = body;
+        out.versions[`${r.coll}|${r.key}`] = r.version;
+      }
     }
     return out;
   }
@@ -166,7 +195,7 @@ export function build() {
       let p = decode(rows[0], true);
       if (s.role === 'pharmacist') p = { id: p.id, token: p.token, name: p.name, mrn: p.mrn, age: p.age, sex: p.sex, unit: p.unit, bed: p.bed, weightKg: p.weightKg, allergies: p.allergies, allergiesUnknown: p.allergiesUnknown, meds: p.meds, labs: (p.labs || []).filter((l: any) => /creatinine|egfr|potassium|inr/i.test(l.test)) };
       audit({ action: 'view-chart', resource: s.role === 'pharmacist' ? 'medication profile' : 'chart', patient_token: rows[0].token, purpose: via === 'btg' ? 'Emergency (break-the-glass)' : PURPOSE[s.role], detail: `access: ${via}${a.btg ? `, grant until ${new Date(a.btg).toISOString()}` : ''}` });
-      const recs = await loadRecords(c, s.role, [pid]);
+      const recs = await loadRecords(c, s, [pid], false); // operational records come with the census
       return { patient: p, access: via, ...recs };
     });
   });
@@ -225,29 +254,89 @@ export function build() {
   });
 
   /* ---------- bootstrap for the app's live adapter ----------
-     The census the app's worklists and dashboards run on: the full record of every patient this caller
-     may open (row-level security decides), projected for pharmacists. Each patient disclosed gets its
-     own audit row; opening a chart later writes its own view-chart row. */
+     The census the app's screens run on. Clinical roles: the full record of every patient they may
+     open (row-level security decides); pharmacists a medication profile; the front desk, billing,
+     insurance, lab, pathology and radiology a projection for their job; quality de-identified tokens.
+     Each patient disclosed gets its own audit row; opening a chart later writes its own view-chart row. */
   const projectPharm = (p: any) => ({ id: p.id, token: p.token, name: p.name, mrn: p.mrn, age: p.age, sex: p.sex, dept: p.dept, unit: p.unit, bed: p.bed, status: p.status, code: p.code, attending: p.attending, weightKg: p.weightKg, heightCm: p.heightCm, allergies: p.allergies, allergiesUnknown: p.allergiesUnknown, meds: p.meds, labs: (p.labs || []).filter((l: any) => /creatinine|egfr|potassium|inr/i.test(l.test)), _projection: 'medication-profile' });
+  const directory = async (c: any) => (await c.query("select id, name, username, role, dept, unit, title, status from app.users order by id")).rows.map((u: any) => u.role === 'patient' ? { ...u, name: null } : u);
   app.get('/api/bootstrap', async (req: any, reply) => {
     const s = await requireUser(req, reply); if (!s) return;
     const cfg = { idleMinutes: env.IDLE_MINUTES, btgHours: env.BTG_HOURS };
-    if (!CHART_ROLES.has(s.role) && s.role !== 'patient') return { user: publicUser(s), patients: [], config: cfg };
+    const censusRole = CHART_ROLES.has(s.role) || s.role === 'patient' || ORG_ROLES.includes(s.role);
     return withAudit(actor(s), req.ip, async (c, audit) => {
+      const users = await directory(c);
+      if (!censusRole) { const recs = await loadRecords(c, s, []); return { user: publicUser(s), users, patients: [], btg: [], config: cfg, ...recs }; }
       const { rows } = await c.query('select * from app.patients order by id');
-      const rel = s.role === 'patient' ? [] : (await c.query('select patient_id, string_agg(kind, \',\') as kinds from app.care_relationships where user_id = $1 group by patient_id', [s.id])).rows;
-      const btg = s.role === 'patient' ? [] : (await c.query('select patient_id, reason, justification, granted_at, expires_at from app.btg_grants where user_id = $1 and expires_at > now()', [s.id])).rows;
+      const rel = CHART_ROLES.has(s.role) ? (await c.query('select patient_id, string_agg(kind, \',\') as kinds from app.care_relationships where user_id = $1 group by patient_id', [s.id])).rows : [];
+      const btg = BTG_ROLES.has(s.role) ? (await c.query('select patient_id, reason, justification, granted_at, expires_at from app.btg_grants where user_id = $1 and expires_at > now()', [s.id])).rows : [];
       const patients = rows.map((r: any) => {
         let p = decode(r, true);
         if (s.role === 'pharmacist') p = projectPharm(p);
+        else if (ORG_ROLES.includes(s.role)) p = project(s.role, p);
         const k = rel.find((x: any) => x.patient_id === r.id);
-        p._access = s.role === 'patient' ? 'self' : k ? 'care' : btg.some((g: any) => g.patient_id === r.id) ? 'btg' : s.role === 'pharmacist' ? 'pharmacy' : 'care';
+        p._access = s.role === 'patient' ? 'self' : k ? 'care' : btg.some((g: any) => g.patient_id === r.id) ? 'btg' : s.role === 'pharmacist' ? 'pharmacy' : ORG_ROLES.includes(s.role) ? 'role' : 'care';
         p._rel = k ? k.kinds : '';
-        audit({ action: 'census', resource: s.role === 'pharmacist' ? 'medication profile and medication records' : 'worklist record and clinical records', patient_token: r.token, purpose: p._access === 'btg' ? 'Emergency (break-the-glass)' : PURPOSE[s.role], detail: `access: ${p._access}` });
+        audit({ action: 'census', resource: s.role === 'quality' ? 'de-identified token' : ORG_ROLES.includes(s.role) ? `${s.role} projection` : s.role === 'pharmacist' ? 'medication profile and medication records' : 'worklist record and clinical records', patient_token: r.token, purpose: p._access === 'btg' ? 'Emergency (break-the-glass)' : PURPOSE[s.role] || 'Operations', detail: `access: ${p._access}` });
         return p;
       });
-      const recs = await loadRecords(c, s.role, patients.map((p: any) => p.id));
-      return { user: publicUser(s), patients, btg, config: cfg, ...recs };
+      const recs = await loadRecords(c, s, patients.map((p: any) => p.id));
+      return { user: publicUser(s), users, patients, btg, config: cfg, ...recs };
+    });
+  });
+
+  /* Quality works de-identified. Naming patients needs a stated purpose; each name revealed is audited. */
+  app.post('/api/reveal', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    if (s.role !== 'quality') return reply.code(403).send({ error: 'Not permitted.' });
+    const purpose = String((req.body || {}).purpose || '').trim(); const ids = ((req.body || {}).ids || []).map(String).slice(0, 200);
+    if (purpose.length < 5) return reply.code(400).send({ error: 'State the purpose.' });
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      const { rows } = await c.query('select * from app.patients where id = any($1)', [ids]);
+      const names = rows.map((r: any) => { const p = decode(r, false); audit({ action: 'phi-reveal', resource: 'identified view', patient_token: r.token, purpose: purpose.slice(0, 80), detail: 'name and MRN revealed' }); return { id: p.id, name: p.name, mrn: p.mrn }; });
+      return { patients: names };
+    });
+  });
+
+  /* Registration (front desk) and unknown emergency arrivals (ER doctor or nurse). Identifiers are
+     encrypted under a new data key; the duplicate check matches date of birth by blind index and then
+     compares names in memory; the MRN comes from a server sequence. */
+  const norm = (x: string) => String(x || '').toLowerCase().replace(/[^a-z]/g, '');
+  const lev = (a: string, b: string) => { const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]); for (let j = 1; j <= b.length; j++) d[0][j] = j; for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); return d[a.length][b.length]; };
+  const users0 = async (c: any) => (await c.query('select id, role, dept, unit, status from app.users')).rows;
+  async function recomputeCare(c: any, pid: string, p: any) {
+    const b = (await c.query('select * from app.patient_boards($1)', [pid])).rows[0];
+    const want = relationsFor(await users0(c), p, { unitGroups: UNIT_GROUPS, onEr: b.on_er, inOt: b.in_ot });
+    await c.query('delete from app.care_relationships where patient_id = $1', [pid]);
+    for (const r of want) await c.query('insert into app.care_relationships values ($1,$2,$3) on conflict do nothing', [r.user, pid, r.kind]);
+    return want.length;
+  }
+  app.post('/api/patients/register', async (req: any, reply) => {
+    const s = await requireUser(req, reply); if (!s) return;
+    const b = req.body || {}, p = b.patient || {};
+    const unknown = !!p.unidentified;
+    if (!(s.role === 'receptionist' || (unknown && BTG_ROLES.has(s.role)))) { await auditOnly(actor(s), req.ip, { action: 'mpi-register', outcome: 'denied', detail: `role ${s.role}` }); return reply.code(403).send({ error: 'Your role cannot register patients.' }); }
+    if (!/^[A-Z][A-Z0-9-]{1,24}$/.test(String(p.id || ''))) return reply.code(400).send({ error: 'Bad patient id.' });
+    if (!unknown && (!p.name || !/^\d{4}-\d{2}-\d{2}$/.test(String(p.dob || '')))) return reply.code(400).send({ error: 'Name and date of birth are required.' });
+    return withAudit(actor(s), req.ip, async (c, audit) => {
+      if ((await c.query('select app.patient_exists($1) as e', [p.id])).rows[0].e) { reply.code(409); return { error: 'That patient id is taken.' }; }
+      if (!unknown) {
+        const cands = (await c.query('select * from app.patients where dob_idx = $1', [blindIndex('dob|' + p.dob)])).rows.map((r: any) => decode(r, false));
+        const m = cands.find((x: any) => lev(norm(x.name), norm(p.name)) <= 2);
+        if (m && !b.force) { audit({ action: 'mpi-duplicate-warning', patient_token: m.token, detail: 'possible duplicate at registration' }); reply.code(409); return { error: `Possible duplicate: ${m.name}, MRN ${m.mrn}.`, duplicate: { id: m.id, name: m.name, mrn: m.mrn } }; }
+      }
+      const n = (await c.query("select nextval('app.mrn_seq') as n")).rows[0].n;
+      const mrn = unknown ? `T-${n}` : String(n);
+      const dek = newDek();
+      const clinical = { problems: p.problems || [], allergies: p.allergies || [], allergiesUnknown: !!p.allergiesUnknown, vitals: p.vitals || {}, meds: p.meds || [], labs: p.labs || [], weightKg: p.weightKg || 0, heightCm: p.heightCm || 0, bloodGroup: p.bloodGroup || 'Unknown', unidentified: unknown, alias: p.alias || '' };
+      const row = { id: p.id, token: patientToken(mrn), age: p.age ?? null, sex: p.sex ?? null, dept: p.dept || (unknown ? 'EMER' : 'GMED'), consults: p.consults || [], unit: p.unit || null, bed: p.bed || null, status: p.status || (unknown ? 'Emergency' : 'Outpatient'), code: p.code || 'Full code', attending: p.attending || null };
+      await c.query(`insert into app.patients (id, token, dek_wrapped, name_enc, dob_enc, mrn_enc, phone_enc, member_id_enc, payer_enc, clinical_enc, name_idx, mrn_idx, dob_idx, age, sex, dept, consults, unit, bed, status, code, attending)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+        [row.id, row.token, kms.wrap(dek), encField(dek, p.name || 'Unknown'), encField(dek, p.dob || ''), encField(dek, mrn), encField(dek, p.phone || ''), encField(dek, p.memberId || ''), encField(dek, p.payer || ''), encField(dek, clinical),
+          blindIndex(p.name || mrn), blindIndex(mrn), p.dob ? blindIndex('dob|' + p.dob) : null, row.age, row.sex, row.dept, row.consults, row.unit, row.bed, row.status, row.code, row.attending]);
+      const nrel = await recomputeCare(c, row.id, row);
+      audit({ action: unknown ? 'mpi-register-unknown' : 'mpi-register', patient_token: row.token, detail: `${unknown ? 'temporary MRN issued' : b.force ? 'duplicate warning overridden' : 'no duplicate found'} · ${nrel} care relationships` });
+      return { id: row.id, mrn, token: row.token };
     });
   });
 
@@ -264,57 +353,143 @@ export function build() {
     });
   });
 
-  /* ---------- clinical record writes (Phase 3) ----------
-     The app sends what changed; each item is authorised, checked against the clinical rules, encrypted,
-     version-checked and audited in its own transaction. A refused item comes back with the stored
-     version so the app can put it back. */
-  const WRITE_ROLES = new Set(['doctor', 'nurse', 'pharmacist']);
+  /* ---------- record writes ----------
+     The app sends what changed; each item is authorised (role policy, then row-level security for
+     patient-linked records), checked against the rules, encrypted, version-checked and audited in its
+     own transaction. A refused item comes back with the stored version so the app can put it back. */
   app.post('/api/records', async (req: any, reply) => {
     const s = await requireUser(req, reply); if (!s) return;
     const writes = (req.body || {}).writes;
     if (!Array.isArray(writes) || writes.length > 50) return reply.code(400).send({ error: 'Send 1 to 50 writes.' });
     const results = [];
-    for (const w of writes) results.push(await writeOne(s, req.ip, w));
+    for (const w of writes) results.push(w && w.coll === 'users' ? await writeUser(s, req.ip, w) : await writeOne(s, req.ip, w));
     return { results };
   });
+  const IDENTITY = ['name', 'dob', 'mrn', 'phone', 'payer', 'memberId'], ADT = ['unit', 'bed', 'status', 'dept', 'consults', 'age', 'attending'];
   async function writeOne(s: any, ip: string, w: any) {
     const coll = w && w.coll as Coll, key = String((w && w.key) || ''), pid = String((w && w.patient) || '');
     const base = { coll, key };
-    if (!COLLS.includes(coll) || !key || key.length > 120 || !pid) return { ...base, ok: false, status: 400, error: 'Bad write.' };
-    if (!WRITE_ROLES.has(s.role)) { await auditOnly(actor(s), ip, { action: `write-${coll}`, resource: key, outcome: 'denied', detail: `role ${s.role}` }); return { ...base, ok: false, status: 403, error: 'Your role cannot change clinical records.' }; }
-    if ((['vitalsLog', 'carePlans', 'medrec', 'patientPatches'] as string[]).includes(coll) && key !== pid) return { ...base, ok: false, status: 400, error: 'Key must be the patient.' };
-    if (coll === 'mar' && key.split('|')[0] !== pid) return { ...base, ok: false, status: 400, error: 'MAR slot belongs to another patient.' };
+    const pol = POLICY[coll];
+    if (!pol || !key || key.length > 160) return { ...base, ok: false, status: 400, error: 'Bad write.' };
+    if (!pol.write.includes(s.role)) { await auditOnly(actor(s), ip, { action: `write-${coll}`, resource: key, outcome: 'denied', detail: `role ${s.role}` }); return { ...base, ok: false, status: 403, error: 'Your role cannot change this.' }; }
+    const uname = (await appPool.query('select name from app.users where id = $1', [s.id])).rows[0].name;
+    if (!pol.pt) return writeOps(s, ip, w, coll, key, uname);
+    if (!pid) return { ...base, ok: false, status: 400, error: 'Bad write.' };
+    if (pol.pt === 'key' && key !== pid) return { ...base, ok: false, status: 400, error: 'Key must be the patient.' };
+    if (pol.pt === 'mar' && key.split('|')[0] !== pid) return { ...base, ok: false, status: 400, error: 'MAR slot belongs to another patient.' };
     return withAudit(actor(s), ip, async (c, audit) => {
       const pr = (await c.query('select * from app.patients where id = $1', [pid])).rows[0];
       if (!pr) { audit({ action: `write-${coll}`, resource: key, outcome: 'denied', detail: 'no care relationship' }); return { ...base, ok: false, status: 403, error: 'Not in your care.' }; }
-      if (s.role === 'pharmacist' && !['orders', 'verified', 'medrec'].includes(coll)) { audit({ action: `write-${coll}`, resource: key, patient_token: pr.token, outcome: 'denied', detail: 'pharmacist scope' }); return { ...base, ok: false, status: 403, error: 'Your role cannot change this part of the record.' }; }
       const dek = kms.unwrap(pr.dek_wrapped);
       const cur = (await c.query('select patient_id, version, body_enc from app.records where coll = $1 and key = $2', [coll, key])).rows[0];
       const old = cur ? decJson(dek, cur.body_enc) : null;
-      const current = cur ? { version: cur.version, body: old } : null;
+      const current = cur ? { version: cur.version, body: projectItem(s.role, coll, old) } : null;
       if (cur && cur.patient_id !== pid) return { ...base, ok: false, status: 409, error: 'Record belongs to another patient.' };
       if ((cur ? cur.version : 0) !== Number(w.version || 0)) { audit({ action: `write-${coll}`, resource: key, patient_token: pr.token, outcome: 'denied', detail: `version conflict (have ${w.version || 0}, stored ${cur ? cur.version : 0})` }); return { ...base, ok: false, status: 409, error: 'Someone else changed this record. The latest version is shown.', current }; }
-      if (coll === 'verified') { const o = (await c.query("select patient_id from app.records where coll = 'orders' and key = $1", [key])).rows[0]; if (!o || o.patient_id !== pid) return { ...base, ok: false, status: 400, error: 'No such order for this patient.' }; }
+      const link = pol.pt === 'order' ? 'orders' : pol.pt === 'discharge' ? 'discharges' : null;
+      if (link) { const o = (await c.query('select patient_id from app.records where coll = $1 and key = $2', [link, key])).rows[0]; if (!o || o.patient_id !== pid) return { ...base, ok: false, status: 400, error: 'No such record for this patient.' }; }
+      // A role that reads a projection writes back only what it can see: hidden fields are kept
+      let next = w.body;
+      if (old && coll === 'patientPatches') next = { ...old, ...next };
+      if (old && coll === 'sdoh' && s.role === 'receptionist') next = { ...next, answers: { ...(old.answers || {}), ...(next.answers || {}) } };
       const patient = { ...decJson(dek, pr.clinical_enc) };
       const planRow = coll === 'orders' ? (await c.query("select body_enc from app.records where coll = 'carePlans' and key = $1", [pid])).rows[0] : null;
-      const uname = (await c.query('select name from app.users where id = $1', [s.id])).rows[0].name;
-      try { check(coll, w.body, { role: s.role, userId: s.id, userName: uname, patient, old, plan: planRow ? decJson(dek, planRow.body_enc) : null }); }
+      const siblings = async (sc: string) => sc === 'appts' ? (await c.query('select * from app.appointments_for_check()')).rows.map((r: any) => ({ key: r.key, body: decJson(kms.unwrap(r.dek_wrapped), r.body_enc) })) : [];
+      const ops = async (oc: string) => { const k = await orgKey(c); return (await c.query('select body_enc from app.ops where coll = $1 order by ord', [oc])).rows.map((r: any) => decJson(k, r.body_enc)); };
+      try { await check(coll, next, { role: s.role, userId: s.id, userName: uname, key, patient, old, plan: planRow ? decJson(dek, planRow.body_enc) : null, siblings, ops }); }
       catch (e) {
         if (!(e instanceof RuleError)) throw e;
         audit({ action: `write-${coll}`, resource: key, patient_token: pr.token, outcome: 'denied', detail: e.message.slice(0, 200) });
         return { ...base, ok: false, status: e.status, error: e.message, current };
       }
-      const enc = encField(dek, w.body);
+      const enc = encField(dek, next);
       if (cur) await c.query('update app.records set version = version + 1, body_enc = $3, updated_by = $4, updated_at = now() where coll = $1 and key = $2', [coll, key, enc, s.id]);
       else await c.query('insert into app.records (coll, key, patient_id, body_enc, created_by, updated_by) values ($1,$2,$3,$4,$5,$5)', [coll, key, pid, enc, s.id]);
+      let extra = '';
+      // Identity and admission/transfer changes also update the patient row (encrypted identifiers,
+      // blind indexes) and the care relationships, so search and access follow the patient
+      if (coll === 'patientPatches') {
+        const changed = Object.keys(next).filter((k) => JSON.stringify((old || {})[k]) !== JSON.stringify(next[k]));
+        const enc2 = (v: any) => encField(dek, v ?? '');
+        if (changed.some((k) => IDENTITY.includes(k))) {
+          const nm = next.name, mr = next.mrn, dob = next.dob;
+          if (nm != null) await c.query('update app.patients set name_enc = $2, name_idx = $3 where id = $1', [pid, enc2(nm), blindIndex(nm)]);
+          if (mr != null) await c.query('update app.patients set mrn_enc = $2, mrn_idx = $3 where id = $1', [pid, enc2(mr), blindIndex(mr)]);
+          if (dob != null) await c.query('update app.patients set dob_enc = $2, dob_idx = $3 where id = $1', [pid, enc2(dob), dob ? blindIndex('dob|' + dob) : null]);
+          for (const [k, col] of [['phone', 'phone_enc'], ['payer', 'payer_enc'], ['memberId', 'member_id_enc']]) if (next[k] != null) await c.query(`update app.patients set ${col} = $2 where id = $1`, [pid, enc2(next[k])]);
+          extra += ' · identity updated';
+        }
+        if (changed.some((k) => ADT.includes(k))) {
+          const merged = { ...pr, ...Object.fromEntries(ADT.filter((k) => next[k] !== undefined).map((k) => [k, next[k]])) };
+          await c.query('update app.patients set unit = $2, bed = $3, status = $4, dept = $5, consults = $6, age = $7, attending = $8 where id = $1', [pid, merged.unit, merged.bed, merged.status, merged.dept, merged.consults || [], merged.age, merged.attending]);
+          extra += ` · care relationships now ${await recomputeCare(c, pid, merged)}`;
+        }
+      }
+      if ((coll === 'er' || coll === 'ot') && !cur) extra += ` · care relationships now ${await recomputeCare(c, pid, pr)}`;
       const version = (cur ? cur.version : 0) + 1;
-      audit({ action: `write-${coll}`, resource: key, patient_token: pr.token, purpose: PURPOSE[s.role], detail: cur ? `updated to v${version}` : 'created' });
+      audit({ action: `write-${coll}`, resource: key, patient_token: pr.token, purpose: PURPOSE[s.role] || 'Operations', detail: (cur ? `updated to v${version}` : 'created') + extra });
       return { ...base, ok: true, version };
+    });
+  }
+  async function writeOps(s: any, ip: string, w: any, coll: string, key: string, uname: string) {
+    const base = { coll, key };
+    return withAudit(actor(s), ip, async (c, audit) => {
+      const dek = await orgKey(c);
+      const cur = (await c.query('select version, body_enc from app.ops where coll = $1 and key = $2', [coll, key])).rows[0];
+      const old = cur ? decJson(dek, cur.body_enc) : null;
+      const current = cur ? { version: cur.version, body: old } : null;
+      if ((cur ? cur.version : 0) !== Number(w.version || 0)) { audit({ action: `write-${coll}`, resource: key, outcome: 'denied', detail: 'version conflict' }); return { ...base, ok: false, status: 409, error: 'Someone else changed this. The latest version is shown.', current }; }
+      const ops = async (oc: string) => (await c.query('select body_enc from app.ops where coll = $1 order by ord', [oc])).rows.map((r: any) => decJson(dek, r.body_enc));
+      try { await check(coll, w.body, { role: s.role, userId: s.id, userName: uname, key, patient: null, old, ops }); }
+      catch (e) {
+        if (!(e instanceof RuleError)) throw e;
+        audit({ action: `write-${coll}`, resource: key, outcome: 'denied', detail: e.message.slice(0, 200) });
+        return { ...base, ok: false, status: e.status, error: e.message, current };
+      }
+      const enc = encField(dek, JSON.stringify(w.body === undefined ? null : w.body)); // always JSON text, so strings and null round-trip
+      if (cur) await c.query('update app.ops set version = version + 1, body_enc = $3, updated_by = $4, updated_at = now() where coll = $1 and key = $2', [coll, key, enc, s.id]);
+      else await c.query('insert into app.ops (coll, key, body_enc, created_by, updated_by) values ($1,$2,$3,$4,$4)', [coll, key, enc, s.id]);
+      // An approved role request changes the account itself, here and nowhere else
+      let extra = '';
+      if (coll === 'roleRequests' && w.body.status === 'approved' && old && old.status === 'pending') {
+        const [role, sc] = String(old.to).split(':');
+        await c.query('update app.users set role = $2, dept = $3, unit = $4, title = $5 where id = $1', [old.user, role, role === 'doctor' ? sc : null, role === 'nurse' ? sc : null, old.toLabel || null]);
+        await c.query('update app.sessions set revoked_at = now() where user_id = $1 and revoked_at is null', [old.user]);
+        const u = (await c.query('select id, role, dept, unit, status from app.users where id = $1', [old.user])).rows;
+        await c.query('delete from app.care_relationships where user_id = $1', [old.user]);
+        let n = 0;
+        for (const pt of (await c.query('select * from app.patients_routing()')).rows) for (const r of relationsFor(u, pt, { unitGroups: UNIT_GROUPS, onEr: pt.on_er, inOt: pt.in_ot })) { await c.query('insert into app.care_relationships values ($1,$2,$3) on conflict do nothing', [r.user, pt.id, r.kind]); n++; }
+        extra = ` · ${old.user} is now ${role}${sc ? ' ' + sc : ''}; ${n} care relationships; their sessions ended`;
+      }
+      const version = (cur ? cur.version : 0) + 1;
+      audit({ action: `write-${coll}`, resource: key, purpose: 'Operations', detail: (cur ? `updated to v${version}` : 'created') + extra });
+      return { ...base, ok: true, version };
+    });
+  }
+  /* Accounts: administrators suspend and reactivate (never themselves). Role and scope change only
+     through an approved role request, so a direct edit of those fields is accepted only when it matches
+     what the approval already applied. */
+  async function writeUser(s: any, ip: string, w: any) {
+    const key = String(w.key || ''), base = { coll: 'users', key };
+    if (s.role !== 'admin') { await auditOnly(actor(s), ip, { action: 'write-users', resource: key, outcome: 'denied', detail: `role ${s.role}` }); return { ...base, ok: false, status: 403, error: 'Only administrators manage accounts.' }; }
+    return withAudit(actor(s), ip, async (c, audit) => {
+      const u = (await c.query('select id, role, dept, unit, title, status from app.users where id = $1', [key])).rows[0];
+      if (!u) return { ...base, ok: false, status: 404, error: 'No such account.' };
+      const next = w.body || {}, current = { version: 0, body: u };
+      for (const k of ['role', 'dept', 'unit']) if ((next[k] ?? null) !== (u[k] ?? null)) { audit({ action: 'write-users', resource: key, outcome: 'denied', detail: `direct ${k} change` }); return { ...base, ok: false, status: 403, error: 'Role and scope change only through an approved role request.', current }; }
+      if (next.status && next.status !== u.status) {
+        if (key === s.id) return { ...base, ok: false, status: 403, error: 'You cannot suspend your own account.', current };
+        if (!['active', 'suspended'].includes(next.status)) return { ...base, ok: false, status: 400, error: 'Unknown status.' };
+        await c.query('update app.users set status = $2 where id = $1', [key, next.status]);
+        if (next.status === 'suspended') await c.query('update app.sessions set revoked_at = now() where user_id = $1 and revoked_at is null', [key]);
+        audit({ action: next.status === 'suspended' ? 'user-suspend' : 'user-reactivate', resource: key, detail: next.status === 'suspended' ? 'sessions ended' : '' });
+      }
+      return { ...base, ok: true, version: 0 };
     });
   }
 
   app.get('/api/health', async () => ({ ok: true }));
-  app.setErrorHandler((err, _req, reply) => { reply.code(err.statusCode && err.statusCode < 500 ? err.statusCode : 500).send({ error: err.statusCode && err.statusCode < 500 ? err.message : 'Something went wrong. Nothing was changed.' }); });
+  app.setErrorHandler((err, _req, reply) => { if (!err.statusCode || err.statusCode >= 500) console.error('[api error]', err.message); reply.code(err.statusCode && err.statusCode < 500 ? err.statusCode : 500).send({ error: err.statusCode && err.statusCode < 500 ? err.message : 'Something went wrong. Nothing was changed.' }); });
   return app;
 }
 

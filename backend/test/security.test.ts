@@ -149,7 +149,8 @@ test('row-level security holds even if the API forgot to check (direct queries a
     const care = +(await owner.query('select count(distinct patient_id) from app.care_relationships where user_id = $1', [userId('elena.cardio')])).rows[0].count;
     assert.equal(n, care);
     await c.query('rollback');
-    await assert.rejects(c.query("update app.patients set unit = 'X'"), /permission denied/);
+    assert.equal((await c.query("update app.patients set unit = 'X'")).rowCount, 0, 'no identity set → no rows can change');
+    await assert.rejects(c.query("update app.patients set clinical_enc = ''::bytea"), /permission denied/);
     await assert.rejects(c.query('delete from app.users'), /permission denied/);
     await assert.rejects(c.query('create table app.x (a int)'), /permission denied/);
   } finally { c.release(); }
@@ -284,7 +285,13 @@ test('the census holds only permitted records, projected for pharmacists, with o
   assert.equal(ph.patients.length, SEED.patients.length);
   assert.ok(ph.patients.every((p: any) => p.problems === undefined && p.phone === undefined && p.vitals === undefined));
   const billing = JSON.parse((await get('/api/bootstrap', await login('marcus.billing'))).body);
-  assert.deepEqual(billing.patients, []);
+  assert.equal(billing.patients.length, SEED.patients.length, 'billing works hospital-wide');
+  assert.ok(billing.patients.every((p: any) => p.problems === undefined && p.allergies === undefined && p.vitals === undefined && p.meds === undefined), 'billing gets demographics only');
+  assert.ok(billing.records.notes.length === 0 && billing.records.orders.length === 0 && billing.records.claims.length > 0, 'billing gets claims, not notes or orders');
+  const exec = JSON.parse((await get('/api/bootstrap', await login('catherine.ceo'))).body);
+  assert.deepEqual(exec.patients, [], 'executives get no patients');
+  const q = JSON.parse((await get('/api/bootstrap', await login('tomas.quality'))).body);
+  assert.ok(q.patients.every((p: any) => /^PT-/.test(p.name) && p.mrn === '—' && !p.dob), 'quality is de-identified');
 });
 
 test('hospital-wide search matches exact MRN or full name by blind index and reveals no identity', async () => {

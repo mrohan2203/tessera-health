@@ -14,8 +14,75 @@ The prototype enforces its security rules in the browser. This folder holds the 
 | 1 · Data layer | One store interface for every persisted read and write, demo and live adapters, access map | **Done** |
 | 2 · Security core | Auth + MFA, users and roles, care relationships, patients with encrypted identifiers, audit pipeline, break-the-glass | **Done** (local; cloud deployment pending) |
 | 3 · Clinical modules | Observations (vitals and labs), orders and checks, results loop, notes, MAR, care plan, rapid response | **Done** (local) |
-| 4 · The rest | Front office, billing, insurance, OT, blood bank, portal, FHIR API, notifications | Next |
+| 4a · The rest of the app | Front office, ER registration, lab, radiology, blood bank, billing, insurance, OT, quality, admin tools, portal | **Done** (local) |
+| 4b · Interfaces | FHIR API, notifications, privacy analytics over the server audit log | Next |
 | 5 · Hardening | HIPAA risk assessment, pen test, monitoring, backup and DR drills, load test | |
+
+## Phase 4a: every module on the API
+
+In live mode, every screen for every role now reads and writes through the API. A crawl of every menu page for all 20 accounts finds none left on local data.
+
+### What changed
+
+- **One policy for everything** ([`src/policy.ts`](src/policy.ts)): for each of 67 collections, the roles that may read it, the roles that may write it, and how it links to a patient. Deny by default.
+- **Where records live:** patient-linked records stay in `app.records`, encrypted per patient. Operational records (blood stock, incidents, assets, configuration, role requests, tenants, personal to-do lists) are in `app.ops`, encrypted under an organisation key wrapped by the master key. Both keep every version and allow no deletes.
+- **Hospital-wide roles work from their job's slice instead of a care relationship:**
+  - Front desk, billing and insurance get demographics.
+  - Lab and pathology get a header.
+  - Radiology gets a header plus allergies and kidney function.
+  - Quality gets de-identified tokens with diagnoses and age.
+  - Executives, administrators and the platform team get no patients.
+  - Each patient sent is audited.
+  - Chart updates are cut to the same projection, so a clinical change never reaches the front desk. The front desk never sees the safety answer in social needs, and its writes can't erase what it can't see.
+- **Registration** (`POST /api/patients/register`): front desk, plus ER doctors and nurses for unknown arrivals.
+  - Identifiers are encrypted under a new key.
+  - The duplicate check matches date of birth by keyed hash, then compares names in memory.
+  - MRNs come from a server sequence.
+- **Care relationships follow the patient:**
+  - Admission, transfer, an emergency-board entry or a theatre booking recompute them, so the receiving unit gains access and the old unit loses it.
+  - An approved role change re-derives that person's relationships and ends their sessions.
+- **Quality** names patients only through `POST /api/reveal`, with a stated purpose; each name revealed is audited.
+
+### Rules added ([`src/records.ts`](src/records.ts))
+
+- **Appointments:** no double-booking, checked against every appointment, including ones the caller can't see. The API decrypts them in memory for the check and returns none.
+- **Lab:**
+  - Steps only go forward.
+  - A value in the critical range must be flagged, and only a pathologist releases a critical result.
+  - Released results can't change, and doctors can't edit lab results.
+- **Radiology:** contrast with eGFR under 30 is blocked unless a radiologist overrides.
+- **Blood bank:** an issue needs a second verifier who isn't you, and never an expired unit.
+- **Role changes:**
+  - A request is made under your own name.
+  - Nobody decides a request they made or one about their own role.
+  - Approval is the only way an account's role changes.
+- **Accounts:** administrators suspend and reactivate, never themselves; suspension ends sessions at once.
+- **Configuration:**
+  - The allergy check can't be turned off.
+  - Idle timeout is 1–30 minutes and break-the-glass lasts 1–12 hours.
+  - Quality can change only alert settings.
+- **Platform support access:** requested by the platform team, approved only by the tenant administrator.
+- **Incidents:** anyone can report; quality and admin manage status.
+- **Personal lists:** to-dos and read markers belong to their owner and are sent only to them.
+
+### Fixed along the way
+
+- The running API cached the organisation key forever. It now re-checks the stored key, so a replaced key (rotation, or a development reseed) is picked up instead of failing to decrypt.
+- The app now records the blood-issue verifier on the record. Before, it was only in the audit text, which the server can't check.
+
+### Verified
+
+- **`npm test`: 47 tests**, 15 of them new for Phase 4: role slices, the social-needs safety projection, double-booking, lab release, contrast, blood issue, role-change separation of duties and re-derived access, suspension, configuration limits, support access, personal lists, registration and duplicate check, admission granting and removing access, quality reveal, and ciphertext-only storage.
+- **`e2e/run_live_usecases.py`: 67 of 73 app workflows pass in live mode.** The 6 that don't:
+  - 5 exercise demo-only screens: demo sign-in, demo storage, and a care-plan test that rewrites a result's history locally, which the server rightly refuses.
+  - 1 is the Privacy Sentinel, which in live mode must analyse the server's audit log (Phase 4b).
+- **`e2e/live_test.py`:** every menu page for all 20 accounts is on the API, and the front desk gets demographics only.
+- **Demo mode unchanged:** 73 workflows pass, and the sweep shows 226 pages, 932 actions, 161 forms, 48 dialogs and 0 issues.
+
+### Still open
+
+- FHIR API, notifications, and the Privacy Sentinel on the server audit log (Phase 4b).
+- From Phase 2: Okta or Entra ID, AWS deployment, rate limiting, authenticator-code replay, and write-once audit storage.
 
 ## Phase 3: clinical records
 
@@ -156,7 +223,7 @@ Then serve `tessera/` on port 8765 and open `http://localhost:8765/?mode=live&ap
   - Authenticator codes can be reused within their 30-second window.
   - Lockout is per account; there is no per-IP rate limit yet.
   - Copying the audit log to write-once storage (S3 Object Lock) is still to do, which matters because someone with DDL rights could rebuild the whole chain.
-- **Other modules:** in live mode the non-clinical modules (front office, ER registration, lab and radiology worklists, blood bank, billing, insurance, admin tools, portal requests) still show synthetic demo data, limited to the patients the server sent. Their changes stay in the open tab, and screens that need records a role isn't sent show "not connected yet". This is Phase 4.
+- **Other modules:** done in Phase 4a.
 - **iPhone:** the app still runs the demo offline. Live mode will be online-only, with `TESSERA_CONFIG.apiBase` set at build time.
 
 ## Phase 1: what changed

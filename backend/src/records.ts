@@ -5,23 +5,35 @@
    are only a convenience. Nothing is ever deleted: corrections are new versions, and the rules make
    signed and administered items immutable. */
 
-export type Coll = 'orders' | 'results' | 'notes' | 'labOrders' | 'rrEvents' | 'mar' | 'verified' | 'vitalsLog' | 'carePlans' | 'medrec' | 'patientPatches';
-export const COLLS: Coll[] = ['orders', 'results', 'notes', 'labOrders', 'rrEvents', 'mar', 'verified', 'vitalsLog', 'carePlans', 'medrec', 'patientPatches'];
-export const ARRAY_COLLS = new Set<Coll>(['orders', 'results', 'notes', 'labOrders', 'rrEvents']); // the rest are objects keyed by patient, MAR slot or order id
+import { POLICY, COLL_NAMES } from './policy.ts';
+export type Coll = string;
+export const COLLS: Coll[] = COLL_NAMES;
+export const ARRAY_COLLS = new Set<Coll>(COLL_NAMES.filter((c) => POLICY[c].arr)); // the rest are objects keyed by patient, MAR slot, order, discharge or name
 
-export interface Ctx { role: string; userId: string; userName: string; patient: any; /* decrypted clinical record */ old: any | null; plan?: any | null; }
+export interface Ctx {
+  role: string; userId: string; userName: string; key: string;
+  patient: any;          // decrypted clinical record (patient-linked collections), else null
+  old: any | null; plan?: any | null;
+  siblings?: (coll: string) => Promise<{ key: string; body: any }[]>; // other items of a collection, for cross-record checks (double booking)
+  ops?: (coll: string) => Promise<any>;                             // an operational collection (blood stock)
+}
 export class RuleError extends Error { status: number; constructor(msg: string, status = 422) { super(msg); this.status = status; } }
 const no = (msg: string, status = 422): never => { throw new RuleError(msg, status); };
 const same = (a: any, b: any) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 const startsWith = (oldArr: any[] = [], newArr: any[] = []) => newArr.length >= oldArr.length && oldArr.every((x, i) => same(x, newArr[i]));
 const only = (role: string, roles: string[], what: string) => { if (!roles.includes(role)) no(`Your role cannot ${what}.`, 403); };
 
-/* Which roles may read each collection (on top of the care relationship), and how to filter rows. */
+/* Which roles may read each collection (POLICY), with row filters on top. */
 export function readable(role: string, coll: Coll, body: any): boolean {
-  if (role === 'doctor' || role === 'nurse') return true;
-  if (role === 'pharmacist') return (coll === 'orders' && body.type === 'Medication') || ['verified', 'mar', 'medrec'].includes(coll);
-  if (role === 'patient') return (coll === 'orders' && body.type === 'Medication' && /Signed|Active/.test(body.status || '')) || (coll === 'labOrders' && body.status === 'Released') || (coll === 'notes' && body.signed === true);
-  return false;
+  const pol = POLICY[coll]; if (!pol || !pol.read.includes(role)) return false;
+  if (role === 'pharmacist' && coll === 'orders') return body.type === 'Medication';
+  if (role === 'patient') {
+    if (coll === 'orders') return body.type === 'Medication' && /Signed|Active/.test(body.status || '');
+    if (coll === 'labOrders') return body.status === 'Released';
+    if (coll === 'notes') return body.signed === true;
+  }
+  if (coll === 'labOrders' && role === 'doctor') return true;
+  return true;
 }
 
 /* Allergy check, the server's copy of the app's rule. */
@@ -43,10 +55,13 @@ function checkVitals(v: any) {
 }
 
 /* The rules. `next` is the item as the app wants it stored; `ctx.old` is the stored version (null when new). */
-export function check(coll: Coll, next: any, ctx: Ctx) {
+export async function check(coll: Coll, next: any, ctx: Ctx) {
   const { role, old } = ctx;
-  if (next == null || typeof next !== 'object') no('Empty record.');
-  if (role === 'patient') no('Your record is read-only here. Requests go through the portal.', 403);
+  const pol = POLICY[coll];
+  if (!pol) no('Unknown record type.', 400);
+  if (!pol.write.includes(role)) no(role === 'patient' ? 'Your record is read-only here. Requests go through the portal.' : 'Your role cannot change this.', 403);
+  if (next === undefined) no('Empty record.');
+  if (pol.perUser && ctx.key !== ctx.userId) no('You can only change your own list.', 403);
   switch (coll) {
     case 'orders': {
       if (!old) only(role, ['doctor'], 'place orders');
@@ -77,14 +92,26 @@ export function check(coll: Coll, next: any, ctx: Ctx) {
       return;
     }
     case 'results': {
+      if (!old) { only(role, ['lab', 'pathologist', 'radiologist'], 'create results'); return; } // critical results raised by the lab or imaging
       only(role, ['doctor', 'nurse'], 'act on results');
-      if (old) { for (const k of ['patient', 'test', 'value']) if (!same(old[k], next[k])) no('A result value cannot change.'); if (!startsWith(old.trail, next.trail)) no('The result trail is append-only.'); }
-      else no('Results come from the laboratory and imaging systems.', 403);
+      for (const k of ['patient', 'test', 'value']) if (!same(old[k], next[k])) no('A result value cannot change.');
+      if (!startsWith(old.trail, next.trail)) no('The result trail is append-only.');
       return;
     }
     case 'labOrders': {
       if (!old) { only(role, ['doctor'], 'order labs'); if (next.value != null || next.status === 'Released') no('A new lab order cannot carry a result.'); return; }
-      no('Lab results are entered by the laboratory (Phase 4).', 403);
+      only(role, ['lab', 'pathologist'], 'work lab orders');
+      for (const k of ['patient', 'test', 'by']) if (!same(old[k], next[k])) no(`A lab order's ${k} cannot change.`);
+      if (old.status === 'Released' && !same(old, next)) no('A released result cannot be changed. Issue a corrected report.');
+      const STEPS = ['Ordered', 'Collected', 'Received', 'Resulted', 'Released'];
+      if (STEPS.indexOf(next.status) < STEPS.indexOf(old.status)) no('A lab order cannot go back a step.');
+      const v = Number(next.value);
+      const critical = (next.critHi != null && v >= next.critHi) || (next.critLo != null && v <= next.critLo);
+      if (critical && !(String(next.flag || '').length > 1)) no('This value is in the critical range and must be flagged.');
+      if (next.status === 'Released' && old.status !== 'Released') {
+        if (String(next.flag || '').length > 1 && role !== 'pathologist') no('A critical result needs pathologist verification before release.', 403);
+        if (next.flag && next.auto) no('Only normal results can be autoverified.');
+      }
       return;
     }
     case 'mar': {
@@ -138,13 +165,70 @@ export function check(coll: Coll, next: any, ctx: Ctx) {
       return;
     }
     case 'patientPatches': {
-      const allowed: Record<string, string[]> = { vitals: ['doctor', 'nurse'], weightKg: ['doctor', 'nurse'], heightCm: ['doctor', 'nurse'], code: ['doctor'], problems: ['doctor'], meds: ['doctor'], allergies: ['doctor', 'nurse'], allergiesUnknown: ['doctor', 'nurse'] };
+      const ADT = ['receptionist', 'nurse', 'doctor'];
+      const allowed: Record<string, string[]> = { vitals: ['doctor', 'nurse'], weightKg: ['doctor', 'nurse'], heightCm: ['doctor', 'nurse'], code: ['doctor'], problems: ['doctor'], meds: ['doctor'], allergies: ['doctor', 'nurse'], allergiesUnknown: ['doctor', 'nurse'], labs: ['doctor'],
+        unit: ADT, bed: ADT, status: ADT, dept: ADT, consults: ADT,                                   // admission, transfer, discharge
+        name: ADT, dob: ADT, age: ADT, mrn: ['receptionist', 'doctor', 'nurse'], phone: ['receptionist'], payer: ['receptionist', 'doctor', 'nurse'], memberId: ['receptionist'], alias: ADT, unidentified: ADT }; // identity (registration, ER identification)
       for (const k of Object.keys(next)) {
         if (same((old || {})[k], next[k])) continue;
-        if (!allowed[k]) no(`"${k}" is not a chart field this API accepts yet (registration and bed moves come in Phase 4).`);
+        if (!allowed[k]) no(`"${k}" is not a chart field this API accepts.`);
         if (!allowed[k].includes(role)) no(`Your role cannot change ${k}.`, 403);
         if (k === 'vitals') checkVitals(next.vitals || {});
       }
+      return;
+    }
+    case 'appts': {
+      if (next.status && ['No-show', 'Rescheduled', 'Cancelled'].includes(next.status)) return;
+      const toMin = (t: string) => { const [h, m] = String(t || '0:0').split(':').map(Number); return h * 60 + m; };
+      if (old && same(old.time, next.time) && same(old.provider, next.provider)) return;
+      const others = ctx.siblings ? await ctx.siblings('appts') : [];
+      const clash = others.find((o) => o.key !== ctx.key && o.body.provider === next.provider && !['No-show', 'Rescheduled', 'Cancelled'].includes(o.body.status) && Math.abs(toMin(o.body.time) - toMin(next.time)) < 30);
+      if (clash) no(`Double booking: that doctor already has a visit at ${clash.body.time}.`, 409);
+      return;
+    }
+    case 'radOrders': {
+      if (!old) { only(role, ['doctor'], 'order imaging'); return; }
+      const egfr = Number(((ctx.patient && ctx.patient.labs) || []).find((l: any) => /egfr/i.test(l.test))?.value);
+      if (next.contrast && Number.isFinite(egfr) && egfr < 30 && next.status !== 'Ordered' && !next.contrastOverride) no(`Contrast blocked: eGFR ${egfr}. Change to non-contrast or record a radiologist override.`);
+      if (next.contrastOverride && !(old && old.contrastOverride) && role !== 'radiologist') no('Only a radiologist can override the contrast check.', 403);
+      return;
+    }
+    case 'crossmatch': {
+      if (next.state === 'Issued' && !(old && old.state === 'Issued')) {
+        if (!next.verifiedBy || next.verifiedBy === ctx.userName) no('Blood is issued only with a second verifier, who cannot be you.');
+        const units = ctx.ops ? await ctx.ops('bloodUnits') : [];
+        for (const id of next.unitIds || []) { const u = (units || []).find((x: any) => x.id === id); if (!u) no(`Unit ${id} is not in stock.`); if (u.expDays < 0) no(`Unit ${id} is expired and cannot be issued.`); }
+      }
+      return;
+    }
+    case 'roleRequests': {
+      if (!old) { if (next.by !== ctx.userId) no('A role request must be made under your own name.', 403); if (next.status !== 'pending') no('A new request starts as pending.'); return; }
+      for (const k of ['user', 'to', 'by', 'why']) if (!same(old[k], next[k])) no('A role request cannot be edited.');
+      if (old.status !== 'pending') no('This request is already decided.');
+      if (next.status === 'approved' || next.status === 'rejected') { if (old.by === ctx.userId || old.user === ctx.userId) no('Separation of duties: you cannot decide a change you requested or one to your own role.', 403); }
+      else if (next.status === 'withdrawn') { if (old.by !== ctx.userId) no('Only the requester can withdraw.', 403); }
+      else no('Unknown decision.');
+      return;
+    }
+    case 'config': {
+      if (role === 'quality' && ctx.key !== 'cds') no('Quality can change alert settings only.', 403);
+      if (ctx.key === 'cds' && next && next.allergy === false) no('The allergy check cannot be turned off.');
+      if (ctx.key === 'idleMin' && !(Number(next) >= 1 && Number(next) <= 30)) no('Idle timeout must be between 1 and 30 minutes.');
+      if (ctx.key === 'btgHours' && !(Number(next) >= 1 && Number(next) <= 12)) no('Break-the-glass grants last 1 to 12 hours.');
+      return;
+    }
+    case 'supportReq': {
+      if (!old) { only(role, ['platform'], 'request support access'); if (next.status !== 'pending' || next.by !== ctx.userId) no('A request starts as pending, under your name.'); return; }
+      if (next.status === 'approved' && old.status !== 'approved') only(role, ['admin'], 'approve support access (the tenant administrator decides)');
+      if (role === 'platform' && !same(old, next)) no('The platform team cannot change its own request.', 403);
+      return;
+    }
+    case 'incidents': {
+      if (old && !same(old.status, next.status) && !['quality', 'admin'].includes(role)) no('Quality manages incident status.', 403);
+      return;
+    }
+    case 'consents': {
+      if (role === 'patient' && old && old.state === 'Done' && !/Revoked/.test(next.state || '') && !same(old, next)) no('A signed consent can only be revoked.');
       return;
     }
   }

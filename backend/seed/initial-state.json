@@ -1,0 +1,2547 @@
+{
+"er": [
+{
+"arrival": "Ambulance",
+"complaint": "Central chest pain, diaphoresis \u2014 ?STEMI",
+"esi": 1,
+"id": "E-1",
+"mOff": 58,
+"patient": "P13",
+"provider": "U-2004",
+"status": "In treatment",
+"triagedOff": 52
+},
+{
+"arrival": "Ambulance",
+"complaint": "Found collapsed at bus stop, GCS 12",
+"esi": 2,
+"id": "E-2",
+"mOff": 35,
+"patient": "P14",
+"provider": "U-2004",
+"status": "In treatment",
+"triagedOff": 30
+},
+{
+"arrival": "Walk-in",
+"complaint": "Right upper quadrant pain, fever",
+"esi": 3,
+"id": "E-3",
+"mOff": 41,
+"patient": "P18",
+"provider": null,
+"status": "Waiting",
+"triagedOff": 33
+},
+{
+"arrival": "Walk-in",
+"complaint": "Car collision, minor lacerations",
+"esi": 3,
+"id": "E-4",
+"mOff": 9,
+"patient": "P15",
+"provider": null,
+"status": "Waiting",
+"triagedOff": null
+},
+{
+"arrival": "Walk-in",
+"complaint": "Right ankle twisting injury",
+"esi": 4,
+"id": "E-5",
+"mOff": 74,
+"patient": "P16",
+"provider": null,
+"status": "Waiting",
+"triagedOff": 60
+},
+{
+"arrival": "Walk-in",
+"complaint": "Medication refill, mild headache",
+"esi": 5,
+"id": "E-6",
+"mOff": 4,
+"patient": "P11",
+"provider": null,
+"status": "Waiting",
+"triagedOff": null
+}
+],
+"ot": [
+{
+"anesthesia": "Dr. Marcus Yee",
+"check": {
+"signIn": {
+"0": true,
+"1": true,
+"2": true,
+"3": true,
+"4": true,
+"5": true
+},
+"signOut": {
+"0": true,
+"1": true,
+"2": true,
+"3": true,
+"4": true
+},
+"timeOut": {
+"0": true,
+"1": true,
+"2": true,
+"3": true,
+"4": true
+}
+},
+"consent": "Signed",
+"cpt": "27447",
+"ebl": "150 mL",
+"id": "OT-1",
+"patient": "P08",
+"procedure": "Total knee arthroplasty, left",
+"room": "OR-1",
+"scheduled": "07:30",
+"site": "Left knee",
+"stage": "Recovery",
+"surgeon": "U-2005"
+},
+{
+"anesthesia": "Dr. Marcus Yee",
+"check": {
+"signIn": {
+"0": true,
+"1": true,
+"2": true
+},
+"signOut": {},
+"timeOut": {}
+},
+"consent": "Signed",
+"cpt": "47562",
+"id": "OT-2",
+"note": "Clopidogrel held 5 days, cleared by cardiology",
+"patient": "P07",
+"procedure": "Laparoscopic cholecystectomy",
+"room": "OR-2",
+"scheduled": "13:00",
+"site": "Abdomen",
+"stage": "Preparation",
+"surgeon": "U-2005"
+},
+{
+"anesthesia": "Dr. Lena Ortiz",
+"check": {
+"signIn": {
+"0": true,
+"1": true,
+"2": true,
+"3": true,
+"4": true,
+"5": true
+},
+"signOut": {
+"0": true,
+"1": true,
+"2": true,
+"3": true,
+"4": true
+},
+"timeOut": {
+"0": true,
+"1": true,
+"2": true,
+"3": true,
+"4": true
+}
+},
+"consent": "Signed",
+"cpt": "44970",
+"ebl": "30 mL",
+"id": "OT-3",
+"patient": "P03",
+"procedure": "Laparoscopic appendectomy",
+"room": "OR-3",
+"scheduled": "06:00",
+"site": "Abdomen",
+"stage": "Completed",
+"surgeon": "U-2005"
+},
+{
+"anesthesia": "Dr. Lena Ortiz",
+"check": {
+"signIn": {},
+"signOut": {},
+"timeOut": {}
+},
+"consent": "Not signed",
+"cpt": "47562",
+"id": "OT-4",
+"patient": "P18",
+"procedure": "Laparoscopic cholecystectomy (urgent, if confirmed)",
+"room": "OR-2",
+"scheduled": "17:30",
+"site": "Abdomen",
+"stage": "Scheduled",
+"surgeon": "U-2005"
+}
+],
+"state": {
+"ambientNotes": [],
+"appts": [
+{
+"patient": "P07",
+"provider": "U-2001",
+"reason": "Post-PCI review",
+"status": "Completed",
+"time": "08:30"
+},
+{
+"patient": "P05",
+"provider": "U-2001",
+"reason": "Palpitations, Holter results",
+"status": "In room",
+"time": "09:15"
+},
+{
+"patient": "P01",
+"provider": "U-2002",
+"reason": "Inpatient consult \u2014 CKD and potassium",
+"status": "Scheduled",
+"time": "10:00"
+},
+{
+"patient": "P08",
+"provider": "U-2002",
+"reason": "BP and diabetes follow-up",
+"status": "Arrived",
+"time": "10:30"
+},
+{
+"patient": "P09",
+"provider": "U-2002",
+"reason": "Diabetic foot check",
+"status": "Waiting",
+"time": "11:00"
+},
+{
+"patient": "P11",
+"provider": "U-2002",
+"reason": "Hypertension follow-up",
+"status": "No-show",
+"time": "11:45"
+},
+{
+"patient": "P06",
+"provider": "U-2002",
+"reason": "Asthma control review",
+"status": "Scheduled",
+"time": "14:00"
+},
+{
+"patient": "P02",
+"provider": "U-2001",
+"reason": "Cardiology rounds note",
+"status": "Scheduled",
+"time": "15:30"
+}
+],
+"assessments": [],
+"assets": [
+{
+"cat": "Imaging",
+"crit": "High",
+"id": "EQ-001",
+"last": -120,
+"loc": "Ground floor, Radiology",
+"name": "Digital X-ray room 1",
+"next": 62,
+"status": "Operational"
+},
+{
+"cat": "Imaging",
+"crit": "Critical",
+"id": "EQ-002",
+"last": -150,
+"loc": "Ground floor, CT suite",
+"name": "CT scanner, 128-slice",
+"next": 30,
+"status": "Operational"
+},
+{
+"cat": "Imaging",
+"crit": "Critical",
+"id": "EQ-003",
+"last": -10,
+"loc": "Ground floor, MRI suite",
+"name": "MRI 3.0T",
+"next": 170,
+"status": "Under maintenance"
+},
+{
+"cat": "Imaging",
+"crit": "High",
+"id": "EQ-004",
+"last": -90,
+"loc": "6th floor, CICU",
+"name": "Portable X-ray (CICU)",
+"next": 90,
+"status": "Operational"
+},
+{
+"cat": "Life support",
+"crit": "Critical",
+"id": "EQ-005",
+"last": -175,
+"loc": "6th floor, CICU",
+"name": "ICU ventilator #3",
+"next": 5,
+"status": "Operational"
+},
+{
+"cat": "Life support",
+"crit": "Critical",
+"id": "EQ-006",
+"last": -183,
+"loc": "Ground floor, ER",
+"name": "Defibrillator, ER crash cart 2",
+"next": -3,
+"status": "Operational"
+},
+{
+"cat": "OR equipment",
+"crit": "Critical",
+"id": "EQ-007",
+"last": -60,
+"loc": "2nd floor, OR-2",
+"name": "Anesthesia workstation OR-2",
+"next": 120,
+"status": "Operational"
+},
+{
+"cat": "Laboratory",
+"crit": "Critical",
+"id": "EQ-008",
+"last": -30,
+"loc": "Ground floor, Blood bank",
+"name": "Blood bank refrigerator",
+"next": 60,
+"note": "Temp 4.1 \u00b0C, continuous monitoring",
+"status": "Operational"
+},
+{
+"cat": "Biomedical",
+"crit": "High",
+"id": "EQ-009",
+"last": -200,
+"loc": "Hospital-wide",
+"name": "Infusion pump fleet (48)",
+"next": -15,
+"status": "Operational"
+}
+],
+"bedRequests": [],
+"bedStatus": {
+"4B-03": "Cleaning",
+"4B-05": "Maintenance",
+"4B-09": "Reserved",
+"CICU-4": "Cleaning",
+"CICU-6": "Reserved"
+},
+"bloodUnits": [
+{
+"expDays": -5,
+"group": "O+",
+"id": "W0412 26 001101",
+"product": "PRBC"
+},
+{
+"expDays": 9,
+"group": "O+",
+"id": "W0412 26 001144",
+"product": "PRBC",
+"reservedFor": "XM-1"
+},
+{
+"expDays": 14,
+"group": "O+",
+"id": "W0412 26 001152",
+"product": "PRBC",
+"reservedFor": "XM-1"
+},
+{
+"expDays": 21,
+"group": "O+",
+"id": "W0412 26 001160",
+"product": "PRBC"
+},
+{
+"expDays": 6,
+"group": "O-",
+"id": "W0412 26 001171",
+"product": "PRBC"
+},
+{
+"expDays": -2,
+"group": "A-",
+"id": "W0412 26 001175",
+"product": "PRBC"
+},
+{
+"expDays": 18,
+"group": "A+",
+"id": "W0412 26 001180",
+"product": "PRBC"
+},
+{
+"expDays": 25,
+"group": "B+",
+"id": "W0412 26 001186",
+"product": "PRBC"
+},
+{
+"expDays": 3,
+"group": "A+",
+"id": "W0412 26 001190",
+"product": "Platelets"
+},
+{
+"expDays": 300,
+"group": "AB+",
+"id": "W0412 26 001199",
+"product": "FFP"
+},
+{
+"expDays": 280,
+"group": "O+",
+"id": "W0412 26 001203",
+"product": "FFP"
+}
+],
+"carePlans": {},
+"caseDrafts": {},
+"claims": [
+{
+"charge": 412,
+"cpt": [
+"99214",
+"93000"
+],
+"dOff": -14,
+"icd": [
+"Z95.5",
+"E78.5"
+],
+"id": "C-9001",
+"note": "835 remittance posted",
+"paid": 286.4,
+"patient": "P07",
+"setting": "Outpatient",
+"status": "Paid"
+},
+{
+"charge": 688,
+"cpt": [
+"99204",
+"93224"
+],
+"dOff": 0,
+"icd": [
+"R00.2",
+"I10"
+],
+"id": "C-9002",
+"paid": 0,
+"patient": "P05",
+"setting": "Outpatient",
+"status": "Ready to submit"
+},
+{
+"charge": 18420,
+"cpt": [
+"99223",
+"99233"
+],
+"dOff": -3,
+"icd": [
+"I25.2",
+"N18.31",
+"E87.5"
+],
+"id": "C-9003",
+"paid": 0,
+"patient": "P01",
+"setting": "Inpatient",
+"status": "Open encounter"
+},
+{
+"charge": 26875,
+"cpt": [
+"99222",
+"93458"
+],
+"dOff": -2,
+"icd": [
+"I21.4",
+"E78.5"
+],
+"id": "C-9004",
+"note": "278 request sent for cardiac cath",
+"paid": 0,
+"patient": "P02",
+"setting": "Inpatient",
+"status": "Prior auth pending"
+},
+{
+"charge": 268,
+"cpt": [
+"99213",
+"83036"
+],
+"dOff": -40,
+"icd": [
+"I10",
+"E11.9"
+],
+"id": "C-9005",
+"note": "CARC 16 \u2014 missing/invalid information (rendering NPI)",
+"paid": 0,
+"patient": "P08",
+"setting": "Outpatient",
+"status": "Denied"
+},
+{
+"charge": 742,
+"cpt": [
+"99214",
+"11042"
+],
+"dOff": -21,
+"icd": [
+"E11.621",
+"L97.419"
+],
+"id": "C-9006",
+"note": "837P accepted by clearinghouse",
+"paid": 0,
+"patient": "P09",
+"setting": "Outpatient",
+"status": "Submitted"
+},
+{
+"charge": 3940,
+"cpt": [
+"99221",
+"87880"
+],
+"dOff": 0,
+"icd": [
+"J02.0",
+"E86.0"
+],
+"id": "C-9007",
+"paid": 0,
+"patient": "P10",
+"setting": "Inpatient",
+"status": "Open encounter"
+},
+{
+"charge": 182,
+"cpt": [
+"99213"
+],
+"dOff": -60,
+"icd": [
+"I10"
+],
+"id": "C-9008",
+"note": "835 remittance posted",
+"paid": 121.75,
+"patient": "P11",
+"setting": "Outpatient",
+"status": "Paid"
+}
+],
+"config": {
+"btgHours": 4,
+"cds": {
+"allergy": true,
+"duplicate": true,
+"interaction": true,
+"missingDose": true
+},
+"idleMin": 15,
+"retention": [
+[
+"Adult medical records",
+10
+],
+[
+"Minors (from age 18)",
+10
+],
+[
+"Audit logs",
+7
+],
+[
+"Ambient audio",
+0
+],
+[
+"Incident reports (PSWP)",
+10
+],
+[
+"Non-PHI application logs",
+1
+]
+]
+},
+"consents": [
+{
+"at": "2026-11-27T02:21:22.897Z",
+"by": "Dr. Caroline Weiss",
+"detail": "Risks, benefits, alternatives discussed; interpreter not needed",
+"kind": "Surgical consent \u2014 left total knee arthroplasty",
+"patient": "P08",
+"state": "Done"
+},
+{
+"at": "2026-11-26T02:21:22.897Z",
+"by": "Dr. Caroline Weiss",
+"detail": "Includes possible conversion to open",
+"kind": "Surgical consent \u2014 laparoscopic cholecystectomy",
+"patient": "P07",
+"state": "Done"
+},
+{
+"at": "2026-11-27T19:21:22.897Z",
+"by": "Dr. Caroline Weiss",
+"kind": "Surgical consent \u2014 laparoscopic appendectomy",
+"patient": "P03",
+"state": "Done"
+},
+{
+"at": "2026-11-21T02:21:22.897Z",
+"by": "Dr. Samuel Okafor",
+"detail": "Valid for series, 12 months",
+"kind": "Blood transfusion consent",
+"patient": "P21",
+"state": "Done"
+},
+{
+"at": "2026-11-26T17:01:22.897Z",
+"by": "Dr. Elena Marsh",
+"detail": "Record excluded from registry extracts",
+"kind": "Research \u2014 cardiac outcomes registry",
+"patient": "P02",
+"state": "Declined"
+}
+],
+"controlled": [
+{
+"item": "Oxycodone 5 mg tab",
+"lastCount": -1,
+"onHand": 240,
+"schedule": "CII"
+},
+{
+"item": "Morphine 2 mg/mL inj",
+"lastCount": -1,
+"onHand": 58,
+"schedule": "CII"
+},
+{
+"item": "Lorazepam 1 mg tab",
+"lastCount": -6,
+"onHand": 112,
+"schedule": "CIV"
+}
+],
+"counts": [],
+"credReminders": {},
+"crossmatch": [
+{
+"by": "U-2001",
+"id": "XM-1",
+"patient": "P04",
+"product": "PRBC",
+"reason": "Hb 7.1 g/dL, symptomatic",
+"reqOff": 240,
+"state": "Crossmatched",
+"units": 2
+},
+{
+"by": "U-2005",
+"id": "XM-2",
+"patient": "P08",
+"product": "PRBC",
+"reason": "Post-op, type and crossmatch on hold",
+"reqOff": 60,
+"state": "Requested",
+"units": 1
+},
+{
+"by": "U-2002",
+"id": "XM-3",
+"patient": "P21",
+"product": "PRBC",
+"reason": "Scheduled transfusion (day care)",
+"reqOff": 300,
+"state": "Issued",
+"units": 2
+}
+],
+"daycare": [
+{
+"mOff": 20,
+"patient": "P20",
+"phase": "Recovery",
+"procedure": "Chemotherapy infusion (FOLFOX, cycle 4)"
+},
+{
+"mOff": 57,
+"patient": "P21",
+"phase": "In procedure",
+"procedure": "Blood transfusion, 2 units PRBC"
+},
+{
+"mOff": 94,
+"patient": "P22",
+"phase": "Pre-procedure",
+"procedure": "IV iron infusion"
+},
+{
+"mOff": 40,
+"patient": "P23",
+"phase": "Ready for discharge",
+"procedure": "Upper endoscopy (EGD)"
+},
+{
+"mOff": 168,
+"patient": "P24",
+"phase": "Recovery",
+"procedure": "Screening colonoscopy"
+},
+{
+"mOff": 62,
+"patient": "P25",
+"phase": "In procedure",
+"procedure": "Cataract surgery, phacoemulsification"
+}
+],
+"dcsum": {},
+"discharges": [
+{
+"by": "U-2001",
+"decidedOff": 95,
+"followUp": [
+"Cardiology review in 2 weeks",
+"Lipid panel in 6 weeks"
+],
+"id": "D-1",
+"patient": "P02",
+"steps": [
+{
+"by": "Dr. Elena Marsh",
+"owner": "doctor",
+"state": "Done",
+"t": "Discharge summary signed"
+},
+{
+"owner": "pharmacist",
+"state": "Pending",
+"t": "Discharge medications reconciled and dispensed"
+},
+{
+"blocker": "Prior authorization for cardiac cath pending; estimated patient balance $2,480",
+"owner": "billing",
+"state": "Blocked",
+"t": "Financial clearance"
+},
+{
+"by": "Ward 4B RN",
+"owner": "nurse",
+"state": "Done",
+"t": "Lines removed, discharge education done"
+},
+{
+"owner": "receptionist",
+"state": "Pending",
+"t": "Transport booked"
+}
+]
+},
+{
+"by": "U-2005",
+"decidedOff": 35,
+"followUp": [
+"Wound check in 10 days",
+"Telehealth check-in day 3"
+],
+"id": "D-2",
+"patient": "P03",
+"steps": [
+{
+"owner": "doctor",
+"state": "Pending",
+"t": "Discharge summary signed"
+},
+{
+"owner": "pharmacist",
+"state": "Pending",
+"t": "Oral antibiotics dispensed (amoxicillin-clavulanate \u00d7 7 days)"
+},
+{
+"owner": "billing",
+"state": "Pending",
+"t": "Financial clearance"
+},
+{
+"by": "Ward 4B RN",
+"owner": "nurse",
+"state": "Done",
+"t": "Wound care teaching done"
+},
+{
+"owner": "receptionist",
+"state": "Pending",
+"t": "Transport booked"
+}
+]
+}
+],
+"docs": [],
+"donors": [
+{
+"group": "O-",
+"hb": 14.6,
+"id": "DN-201",
+"lastDays": 70,
+"name": "Marcus Feld",
+"status": "Eligible"
+},
+{
+"group": "A+",
+"hb": 13.1,
+"id": "DN-202",
+"lastDays": 30,
+"name": "Alicia Romero",
+"status": "Deferred",
+"why": "Donated 30 days ago (minimum 56)"
+},
+{
+"group": "B+",
+"hb": 15.2,
+"id": "DN-203",
+"lastDays": 120,
+"name": "Kenji Watanabe",
+"status": "Eligible"
+},
+{
+"group": "A-",
+"hb": 12.2,
+"id": "DN-204",
+"lastDays": 200,
+"name": "Priyanka Shah",
+"status": "Eligible"
+},
+{
+"group": "O+",
+"hb": 11.9,
+"id": "DN-205",
+"lastDays": 400,
+"name": "Tom Becker",
+"status": "Deferred",
+"why": "Hemoglobin 11.9 g/dL (minimum 12.5)"
+},
+{
+"group": "AB+",
+"hb": 13.8,
+"id": "DN-206",
+"lastDays": 90,
+"name": "Grace Okoye",
+"status": "Eligible"
+},
+{
+"group": "O+",
+"hb": 14.9,
+"id": "DN-207",
+"lastDays": 60,
+"name": "Luis Ortega",
+"status": "Eligible"
+}
+],
+"er": [
+{
+"arrival": "Ambulance",
+"complaint": "Central chest pain, diaphoresis \u2014 ?STEMI",
+"esi": 1,
+"id": "E-1",
+"mOff": 58,
+"patient": "P13",
+"provider": "U-2004",
+"status": "In treatment",
+"triagedOff": 52
+},
+{
+"arrival": "Ambulance",
+"complaint": "Found collapsed at bus stop, GCS 12",
+"esi": 2,
+"id": "E-2",
+"mOff": 35,
+"patient": "P14",
+"provider": "U-2004",
+"status": "In treatment",
+"triagedOff": 30
+},
+{
+"arrival": "Walk-in",
+"complaint": "Right upper quadrant pain, fever",
+"esi": 3,
+"id": "E-3",
+"mOff": 41,
+"patient": "P18",
+"provider": null,
+"status": "Waiting",
+"triagedOff": 33
+},
+{
+"arrival": "Walk-in",
+"complaint": "Car collision, minor lacerations",
+"esi": 3,
+"id": "E-4",
+"mOff": 9,
+"patient": "P15",
+"provider": null,
+"status": "Waiting",
+"triagedOff": null
+},
+{
+"arrival": "Walk-in",
+"complaint": "Right ankle twisting injury",
+"esi": 4,
+"id": "E-5",
+"mOff": 74,
+"patient": "P16",
+"provider": null,
+"status": "Waiting",
+"triagedOff": 60
+},
+{
+"arrival": "Walk-in",
+"complaint": "Medication refill, mild headache",
+"esi": 5,
+"id": "E-6",
+"mOff": 4,
+"patient": "P11",
+"provider": null,
+"status": "Waiting",
+"triagedOff": null
+}
+],
+"erx": [
+{
+"by": "U-2002",
+"controlled": false,
+"drug": "Albuterol HFA 90 mcg, 2 puffs q4\u20136h PRN",
+"patient": "P06",
+"pharmacy": "Bayview Outpatient Pharmacy",
+"status": "Sent (NCPDP SCRIPT)"
+},
+{
+"by": "U-2002",
+"controlled": false,
+"drug": "Mupirocin 2% ointment, apply BID",
+"patient": "P09",
+"pharmacy": "Bayview Outpatient Pharmacy",
+"status": "Sent (NCPDP SCRIPT)"
+}
+],
+"extraPatients": [],
+"extracts": [],
+"family": {
+"P08": [
+{
+"contact": "\u2022\u2022\u2022 \u2022\u2022\u2022 4471",
+"level": "Status updates",
+"name": "Anil Bhatt",
+"relation": "Spouse"
+}
+]
+},
+"familyMsgs": [],
+"followups": [
+{
+"done": false,
+"dueOff": 0,
+"kind": "Day-3 wound check call",
+"patient": "P09",
+"risk": "Medium"
+},
+{
+"done": false,
+"dueOff": 1,
+"kind": "Week-1 asthma check",
+"patient": "P06",
+"risk": "Low"
+},
+{
+"done": false,
+"dueOff": 2,
+"kind": "Cardiac rehab enrollment call (after discharge)",
+"patient": "P12",
+"risk": "High"
+}
+],
+"forecastWhatIf": 0,
+"gapsDone": {},
+"gfe": [],
+"hai": [
+{
+"device": "Urinary catheter, day 17",
+"id": "HAI-1",
+"nhsn": "Reported",
+"organism": "E. coli (ESBL+)",
+"patient": "P01",
+"status": "Under treatment",
+"tx": "Meropenem 1 g IV q8h \u00d7 7 days",
+"type": "CAUTI",
+"unit": "CICU"
+},
+{
+"device": "Central line, day 5",
+"id": "HAI-2",
+"nhsn": "Pending criteria",
+"organism": "Cultures pending",
+"patient": "P04",
+"status": "Investigating",
+"tx": "Empiric vancomycin + cefepime",
+"type": "CLABSI",
+"unit": "CICU"
+}
+],
+"handovers": [
+{
+"a": "Hyperkalemia under treatment; telmisartan held; borderline blood pressure.",
+"ack": null,
+"b": "HTN, T2DM, AF on warfarin (held, INR 5.8 yesterday). Admitted via ER with chest pain.",
+"from": "Dr. Elena Marsh (day)",
+"id": "H-1",
+"patient": "P01",
+"r": "Repeat K\u207a and ECG at 22:00. Call if SBP < 100 or new arrhythmia. Recheck INR in the morning.",
+"s": "62M, CAD and CKD 3a, K\u207a 6.1 critical, on cardiac monitor in CICU-3.",
+"status": "Unstable",
+"tasks": [
+{
+"done": false,
+"due": "22:00",
+"t": "Repeat potassium + ECG",
+"urgent": true
+},
+{
+"done": false,
+"due": "06:00",
+"t": "Review INR",
+"urgent": false
+}
+],
+"to": "Night cardiology"
+},
+{
+"a": "Stable. Discharge blocked on prior authorization for cardiac cath.",
+"ack": null,
+"b": "HTN, hyperlipidemia. Penicillin anaphylaxis.",
+"from": "Dr. Elena Marsh (day)",
+"id": "H-2",
+"patient": "P02",
+"r": "If authorization clears overnight, complete discharge. Otherwise continue heparin and recheck troponin.",
+"s": "52F, NSTEMI rule-out, clinically ready for discharge.",
+"status": "Watch",
+"tasks": [
+{
+"done": false,
+"due": "08:00",
+"t": "Check prior-auth status",
+"urgent": false
+}
+],
+"to": "Night cardiology"
+},
+{
+"a": "Radial site clean, pulses intact, pain 1/10.",
+"ack": null,
+"b": "Latex allergy. Smoker.",
+"from": "Grace Lin, RN (day)",
+"id": "H-3",
+"patient": "P12",
+"r": "Radial band release per protocol at 20:00. Morning aspirin due.",
+"s": "58M NSTEMI, post-cath, CICU-2.",
+"status": "Stable",
+"tasks": [
+{
+"done": false,
+"due": "20:00",
+"t": "Radial band release",
+"urgent": false
+}
+],
+"to": "CICU night RN"
+}
+],
+"incidents": [
+{
+"dOff": -2,
+"harm": "Temporary harm",
+"id": "IR-041",
+"kind": "Adverse event",
+"reporter": "Anonymous",
+"status": "Under investigation",
+"text": "Insulin 20 units given instead of 10 units ordered. Glucose fell to 54 mg/dL; treated with D50, recovered.",
+"type": "Medication error",
+"where": "Ward 4B"
+},
+{
+"dOff": -3,
+"harm": "Minor harm",
+"id": "IR-040",
+"kind": "Adverse event",
+"reporter": "Ward 4B RN",
+"status": "Root cause analysis",
+"text": "Patient found on floor beside bed. No loss of consciousness. Hip X-ray negative.",
+"type": "Fall",
+"where": "Ward 4B"
+},
+{
+"dOff": -5,
+"harm": "No harm",
+"id": "IR-039",
+"kind": "Near miss",
+"reporter": "Grace Lin, RN",
+"status": "Closed",
+"text": "Hydroxyzine pulled instead of hydralazine; caught by barcode scan before administration.",
+"type": "Medication \u2014 look-alike",
+"where": "CICU"
+}
+],
+"insCases": [
+{
+"amount": 26875,
+"docs": [
+{
+"n": "X12 278 authorization request",
+"ok": true
+},
+{
+"n": "Cardiology consult note",
+"ok": true
+},
+{
+"n": "Troponin trend",
+"ok": false
+},
+{
+"n": "12-lead ECG tracing",
+"ok": false
+}
+],
+"id": "PA-501",
+"kind": "Prior authorization",
+"patient": "P02",
+"payer": "Aetna PPO",
+"service": "Left heart catheterization (CPT 93458)",
+"status": "Payer query",
+"thread": [
+{
+"from": "Aetna utilization review",
+"off": 360,
+"text": "Please send troponin trend and ECG tracing to support medical necessity."
+}
+],
+"timeline": [
+{
+"off": 1440,
+"t": "Authorization request submitted (278)"
+},
+{
+"off": 360,
+"t": "Payer requested more information"
+}
+]
+},
+{
+"amount": 9850,
+"docs": [
+{
+"n": "X12 278 authorization request",
+"ok": true
+},
+{
+"n": "Surgical consult note",
+"ok": true
+},
+{
+"n": "RUQ ultrasound report",
+"ok": true
+}
+],
+"id": "PA-502",
+"kind": "Prior authorization",
+"patient": "P07",
+"payer": "Aetna Medicare Advantage",
+"ref": "AUTH-7731902",
+"service": "Laparoscopic cholecystectomy (CPT 47562)",
+"status": "Approved",
+"thread": [],
+"timeline": [
+{
+"off": 4320,
+"t": "Authorization request submitted (278)"
+},
+{
+"off": 2880,
+"t": "Approved, valid 60 days"
+}
+]
+},
+{
+"amount": 41200,
+"docs": [
+{
+"n": "UB-04 / 837I claim",
+"ok": true
+},
+{
+"n": "Operative report",
+"ok": false
+},
+{
+"n": "Discharge summary",
+"ok": false
+}
+],
+"id": "CL-601",
+"kind": "Inpatient claim",
+"patient": "P03",
+"payer": "Blue Shield of California HMO",
+"service": "Appendectomy with sepsis (MS-DRG 339)",
+"status": "Documents needed",
+"thread": [],
+"timeline": [
+{
+"off": 120,
+"t": "Claim drafted from charge capture"
+}
+]
+}
+],
+"interop": {
+"apps": [
+{
+"id": "APP-1",
+"kind": "Patient-facing (SMART)",
+"name": "Bayview Patient App",
+"scopes": "patient/*.read",
+"status": "Approved"
+},
+{
+"id": "APP-2",
+"kind": "Clinician (SMART EHR launch)",
+"name": "Cardiac risk calculator",
+"scopes": "user/Observation.read user/Patient.read",
+"status": "Approved"
+},
+{
+"id": "APP-3",
+"kind": "Patient-facing (SMART)",
+"name": "Third-party wellness app",
+"scopes": "patient/*.read",
+"status": "Pending security review"
+}
+],
+"base": "https://fhir.bayview.example/r4",
+"jobs": [
+{
+"id": "BX-1",
+"kind": "Bulk FHIR $export to Medicare Advantage plan (HEDIS supplemental data)",
+"resources": "Patient, Condition, Observation, Encounter",
+"status": "Completed",
+"when": "Yesterday 02:00"
+},
+{
+"id": "BX-2",
+"kind": "Payer-to-payer exchange (CMS-0057)",
+"resources": "Claims, encounters, prior authorizations",
+"status": "Scheduled",
+"when": "Tonight 02:00"
+}
+],
+"uscdi": [
+[
+"Patient demographics",
+true
+],
+[
+"Allergies and intolerances",
+true
+],
+[
+"Problems",
+true
+],
+[
+"Medications",
+true
+],
+[
+"Laboratory",
+true
+],
+[
+"Vital signs",
+true
+],
+[
+"Clinical notes",
+true
+],
+[
+"Procedures",
+true
+],
+[
+"Immunizations",
+false
+],
+[
+"Care team members",
+true
+],
+[
+"Goals and health concerns",
+false
+],
+[
+"Health insurance information",
+true
+]
+]
+},
+"labOrders": [
+{
+"by": "U-2001",
+"critHi": 6,
+"critLo": 2.8,
+"hi": 5.1,
+"id": "L-301",
+"lo": 3.5,
+"loinc": "2823-3",
+"mOff": 25,
+"patient": "P01",
+"priority": "STAT",
+"ref": "3.5\u20135.1",
+"specimen": "Lithium heparin, green top",
+"status": "Collected",
+"test": "Potassium (repeat)",
+"unit": "mmol/L"
+},
+{
+"by": "U-2001",
+"critHi": 160,
+"critLo": 120,
+"hi": 145,
+"id": "L-302",
+"lo": 135,
+"loinc": "2951-2",
+"mOff": 40,
+"patient": "P04",
+"priority": "Routine",
+"ref": "135\u2013145",
+"specimen": "Lithium heparin, green top",
+"status": "Ordered",
+"test": "Sodium",
+"unit": "mmol/L"
+},
+{
+"by": "U-2004",
+"critHi": 0.5,
+"critLo": null,
+"hi": 0.04,
+"id": "L-303",
+"lo": null,
+"loinc": "10839-9",
+"mOff": 15,
+"patient": "P13",
+"priority": "STAT",
+"ref": "<0.04",
+"resultedBy": "Ben Okoro, MLS",
+"specimen": "Lithium heparin, green top",
+"status": "Resulted",
+"test": "Troponin I (3 h repeat)",
+"unit": "ng/mL",
+"value": "3.8"
+},
+{
+"by": "U-2002",
+"id": "L-304",
+"loinc": "600-7",
+"mOff": 610,
+"patient": "P03",
+"priority": "Routine",
+"ref": "No growth",
+"specimen": "Aerobic + anaerobic bottles",
+"status": "Received",
+"test": "Blood culture \u00d7 2",
+"text": true,
+"unit": ""
+},
+{
+"by": "U-2003",
+"critHi": 30,
+"critLo": 1,
+"hi": 13.5,
+"id": "L-305",
+"lo": 4.5,
+"loinc": "6690-2",
+"mOff": 300,
+"patient": "P10",
+"priority": "Routine",
+"ref": "4.5\u201313.5",
+"releasedBy": "Dr. Hannah Cho",
+"resultedBy": "Ben Okoro, MLS",
+"specimen": "EDTA, lavender top",
+"status": "Released",
+"test": "WBC",
+"unit": "10\u00b3/\u00b5L",
+"value": "14.2"
+},
+{
+"by": "U-2005",
+"critHi": 20,
+"critLo": 7,
+"hi": 15.5,
+"id": "L-306",
+"lo": 12,
+"loinc": "718-7",
+"mOff": 30,
+"patient": "P08",
+"priority": "Urgent",
+"ref": "12.0\u201315.5",
+"specimen": "EDTA, lavender top",
+"status": "Ordered",
+"test": "Hemoglobin (post-op)",
+"unit": "g/dL"
+},
+{
+"by": "U-2004",
+"critHi": 1000,
+"critLo": null,
+"hi": 60,
+"id": "L-307",
+"lo": 13,
+"loinc": "3040-3",
+"mOff": 20,
+"patient": "P18",
+"priority": "Urgent",
+"ref": "13\u201360",
+"specimen": "Lithium heparin, green top",
+"status": "Collected",
+"test": "Lipase",
+"unit": "U/L"
+}
+],
+"mar": {
+"P01|Aspirin 81 mg PO|08:00": {
+"by": "Grace Lin, RN",
+"state": "Given"
+},
+"P12|Aspirin 81 mg PO|06:00": {
+"note": "Patient NPO for cath; not given",
+"state": "Missed"
+},
+"P12|Metoprolol tartrate 25 mg PO|06:00": {
+"by": "Grace Lin, RN",
+"state": "Given"
+}
+},
+"medrec": {},
+"notes": [
+{
+"addenda": [],
+"author": "Dr. Elena Marsh",
+"id": "N-1",
+"kind": "Progress note",
+"mOff": 300,
+"patient": "P01",
+"signed": true,
+"text": "S: Mild fatigue, no chest pain.\nO: K 6.1, Cr 1.6, INR 5.8 yesterday (warfarin held).\nA: Hyperkalemia likely from ARB + CKD; supratherapeutic INR.\nP: Hold telmisartan, repeat K + ECG, nephrology/GM consult, recheck INR AM."
+},
+{
+"addenda": [],
+"author": "Dr. Samuel Okafor",
+"id": "N-2",
+"kind": "Admission H&P",
+"mOff": 600,
+"patient": "P03",
+"signed": true,
+"text": "34M with fever, tachycardia, lactate 4.2. Sepsis bundle started. Cultures drawn before antibiotics. Source workup in progress."
+},
+{
+"addenda": [],
+"author": "Grace Lin, RN",
+"id": "N-3",
+"kind": "Nursing note",
+"mOff": 240,
+"patient": "P12",
+"signed": true,
+"text": "Pt NPO for cath at 06:00; 06:00 aspirin not given per protocol. VSS. Latex-free cart in room."
+}
+],
+"notifRead": {},
+"orderSets": [
+{
+"id": "OS-1",
+"items": [
+{
+"text": "Troponin I now and at 3 h",
+"type": "Lab"
+},
+{
+"text": "Basic metabolic panel",
+"type": "Lab"
+},
+{
+"text": "XR chest, portable AP",
+"type": "Imaging"
+},
+{
+"text": "Aspirin 325 mg PO once (chewed)",
+"type": "Medication"
+},
+{
+"text": "12-lead ECG within 10 minutes; repeat with pain",
+"type": "Nursing"
+}
+],
+"name": "Chest pain / ACS rule-out"
+},
+{
+"id": "OS-2",
+"items": [
+{
+"text": "Lactate now; repeat in 2 h if > 2",
+"type": "Lab"
+},
+{
+"text": "Blood cultures x 2 before antibiotics",
+"type": "Lab"
+},
+{
+"text": "Piperacillin-tazobactam 4.5 g IV q6h",
+"type": "Medication"
+},
+{
+"text": "Lactated Ringer 30 mL/kg IV bolus",
+"type": "Medication"
+}
+],
+"name": "Sepsis hour-1 bundle"
+},
+{
+"id": "OS-3",
+"items": [
+{
+"text": "Furosemide 40 mg IV BID",
+"type": "Medication"
+},
+{
+"text": "BMP and magnesium daily",
+"type": "Lab"
+},
+{
+"text": "Daily weights, strict intake/output, 2 g sodium diet",
+"type": "Nursing"
+}
+],
+"name": "Heart failure exacerbation"
+}
+],
+"orders": [
+{
+"by": "U-2001",
+"id": "O-501",
+"patient": "P01",
+"priority": "STAT",
+"status": "Active",
+"text": "Potassium + 12-lead ECG \u2014 STAT, repeat in 2h",
+"type": "Lab"
+},
+{
+"by": "U-2001",
+"flag": {
+"kind": "interaction",
+"text": "ARB with serum potassium 6.1 mmol/L (critical high). Consider holding and rechecking."
+},
+"id": "O-502",
+"patient": "P01",
+"priority": "Routine",
+"status": "Pending signature",
+"text": "Telmisartan 40 mg PO daily",
+"type": "Medication"
+},
+{
+"by": "U-2001",
+"flag": {
+"kind": "missing-dose",
+"text": "Ordered without a dose. Add a dose before signing."
+},
+"id": "O-503",
+"patient": "P01",
+"priority": "Routine",
+"status": "Pending signature",
+"text": "Atorvastatin PO nightly",
+"type": "Medication"
+},
+{
+"by": "U-2001",
+"flag": {
+"kind": "allergy",
+"text": "Documented penicillin allergy (anaphylaxis). Amoxicillin is a penicillin-class antibiotic."
+},
+"id": "O-504",
+"patient": "P02",
+"priority": "Routine",
+"status": "Pending signature",
+"text": "Amoxicillin 500 mg PO TID",
+"type": "Medication"
+},
+{
+"by": "U-2001",
+"id": "O-505",
+"patient": "P02",
+"priority": "Routine",
+"status": "Completed",
+"text": "Lipid panel + HbA1c, fasting",
+"type": "Lab"
+},
+{
+"by": "U-2002",
+"flag": {
+"kind": "duplicate",
+"text": "Pantoprazole 40 mg IV is already active. Two proton-pump inhibitors."
+},
+"id": "O-506",
+"patient": "P03",
+"priority": "Routine",
+"status": "Pending signature",
+"text": "Omeprazole 20 mg PO daily",
+"type": "Medication"
+},
+{
+"by": "U-2002",
+"id": "O-507",
+"patient": "P03",
+"priority": "Urgent",
+"status": "Active",
+"text": "Chest X-ray, PA, portable",
+"type": "Imaging"
+},
+{
+"by": "U-2001",
+"id": "O-508",
+"patient": "P04",
+"priority": "Routine",
+"status": "Signed",
+"text": "Furosemide 40 mg IV BID",
+"type": "Medication"
+},
+{
+"by": "U-2001",
+"id": "O-509",
+"patient": "P12",
+"priority": "Routine",
+"status": "Signed",
+"text": "Atorvastatin 80 mg PO nightly",
+"type": "Medication"
+},
+{
+"by": "U-2002",
+"id": "O-510",
+"patient": "P03",
+"priority": "STAT",
+"status": "Signed",
+"text": "Piperacillin-tazobactam 4.5 g IV q6h",
+"type": "Medication"
+}
+],
+"ot": [
+{
+"anesthesia": "Dr. Marcus Yee",
+"check": {
+"signIn": {
+"0": true,
+"1": true,
+"2": true,
+"3": true,
+"4": true,
+"5": true
+},
+"signOut": {
+"0": true,
+"1": true,
+"2": true,
+"3": true,
+"4": true
+},
+"timeOut": {
+"0": true,
+"1": true,
+"2": true,
+"3": true,
+"4": true
+}
+},
+"consent": "Signed",
+"cpt": "27447",
+"ebl": "150 mL",
+"id": "OT-1",
+"patient": "P08",
+"procedure": "Total knee arthroplasty, left",
+"room": "OR-1",
+"scheduled": "07:30",
+"site": "Left knee",
+"stage": "Recovery",
+"surgeon": "U-2005"
+},
+{
+"anesthesia": "Dr. Marcus Yee",
+"check": {
+"signIn": {
+"0": true,
+"1": true,
+"2": true
+},
+"signOut": {},
+"timeOut": {}
+},
+"consent": "Signed",
+"cpt": "47562",
+"id": "OT-2",
+"note": "Clopidogrel held 5 days, cleared by cardiology",
+"patient": "P07",
+"procedure": "Laparoscopic cholecystectomy",
+"room": "OR-2",
+"scheduled": "13:00",
+"site": "Abdomen",
+"stage": "Preparation",
+"surgeon": "U-2005"
+},
+{
+"anesthesia": "Dr. Lena Ortiz",
+"check": {
+"signIn": {
+"0": true,
+"1": true,
+"2": true,
+"3": true,
+"4": true,
+"5": true
+},
+"signOut": {
+"0": true,
+"1": true,
+"2": true,
+"3": true,
+"4": true
+},
+"timeOut": {
+"0": true,
+"1": true,
+"2": true,
+"3": true,
+"4": true
+}
+},
+"consent": "Signed",
+"cpt": "44970",
+"ebl": "30 mL",
+"id": "OT-3",
+"patient": "P03",
+"procedure": "Laparoscopic appendectomy",
+"room": "OR-3",
+"scheduled": "06:00",
+"site": "Abdomen",
+"stage": "Completed",
+"surgeon": "U-2005"
+},
+{
+"anesthesia": "Dr. Lena Ortiz",
+"check": {
+"signIn": {},
+"signOut": {},
+"timeOut": {}
+},
+"consent": "Not signed",
+"cpt": "47562",
+"id": "OT-4",
+"patient": "P18",
+"procedure": "Laparoscopic cholecystectomy (urgent, if confirmed)",
+"room": "OR-2",
+"scheduled": "17:30",
+"site": "Abdomen",
+"stage": "Scheduled",
+"surgeon": "U-2005"
+}
+],
+"pathways": [
+{
+"id": "PW-1",
+"metric": "Door-to-balloon",
+"name": "STEMI \u2014 primary PCI",
+"patient": "P13",
+"startOff": 58,
+"steps": [
+{
+"by": "Triage RN",
+"note": "Anterior ST elevation V1\u2013V4",
+"off": 52,
+"t": "Triage + 12-lead ECG within 10 min"
+},
+{
+"by": "Dr. Farid Haddad",
+"off": 48,
+"t": "Cath lab activated"
+},
+{
+"by": "Dr. Farid Haddad",
+"note": "Aspirin 325 mg, ticagrelor 180 mg, heparin bolus",
+"off": 41,
+"t": "Aspirin, P2Y12 load, heparin"
+},
+{
+"t": "Transfer to cath lab"
+},
+{
+"t": "Balloon inflation"
+},
+{
+"t": "Post-PCI CICU admission"
+}
+],
+"target": 90
+},
+{
+"id": "PW-2",
+"metric": "Bundle complete",
+"name": "Sepsis \u2014 hour-1 bundle",
+"patient": "P03",
+"startOff": 600,
+"steps": [
+{
+"by": "Dr. Samuel Okafor",
+"note": "4.2 mmol/L",
+"off": 596,
+"t": "Lactate measured"
+},
+{
+"by": "Ward 4B RN",
+"off": 592,
+"t": "Blood cultures before antibiotics"
+},
+{
+"by": "Ward 4B RN",
+"note": "Piperacillin-tazobactam 4.5 g IV",
+"off": 580,
+"t": "Broad-spectrum antibiotics"
+},
+{
+"by": "Ward 4B RN",
+"off": 570,
+"t": "30 mL/kg crystalloid for hypotension or lactate \u2265 4"
+},
+{
+"t": "Repeat lactate within 2\u20134 h"
+},
+{
+"by": "Dr. Caroline Weiss",
+"note": "Laparoscopic appendectomy",
+"off": 240,
+"t": "Source control"
+}
+],
+"target": 60
+},
+{
+"id": "PW-3",
+"metric": "Door-to-CT",
+"name": "Code stroke",
+"patient": "P14",
+"startOff": 35,
+"steps": [
+{
+"by": "Dr. Farid Haddad",
+"off": 33,
+"t": "Stroke alert called"
+},
+{
+"by": "ER RN",
+"note": "112 mg/dL",
+"off": 31,
+"t": "Glucose checked"
+},
+{
+"t": "Last known well established"
+},
+{
+"t": "Non-contrast CT head"
+},
+{
+"t": "Thrombolysis decision"
+},
+{
+"t": "Stroke unit or neuro-IR"
+}
+],
+"target": 25
+}
+],
+"patientPatches": {},
+"portalRequests": [],
+"privacyCases": {},
+"processing": [
+{
+"donor": "DN-203",
+"group": "B+",
+"id": "W0412 26 001240",
+"product": "PRBC",
+"results": {
+"0": "Neg",
+"1": "Neg",
+"2": "Neg",
+"3": "Neg",
+"4": "Neg"
+}
+},
+{
+"donor": "DN-206",
+"group": "AB+",
+"id": "W0412 26 001241",
+"product": "PRBC",
+"results": {}
+}
+],
+"radOrders": [
+{
+"acc": "ACC-77120",
+"by": "U-2004",
+"contrast": false,
+"id": "RAD-1",
+"indication": "Found collapsed, GCS 12. Rule out intracranial hemorrhage (code stroke).",
+"mOff": 12,
+"modality": "CT",
+"patient": "P14",
+"phantom": "sdh",
+"priority": "STAT",
+"status": "Completed",
+"study": "CT head without contrast"
+},
+{
+"acc": "ACC-77031",
+"by": "U-2002",
+"contrast": true,
+"id": "RAD-2",
+"indication": "Sepsis, right lower quadrant pain.",
+"mOff": 560,
+"modality": "CT",
+"patient": "P03",
+"phantom": "abd",
+"priority": "Urgent",
+"report": {
+"at": null,
+"by": "Dr. Victor Lund",
+"critical": true,
+"findings": "Dilated, thick-walled appendix with periappendiceal fat stranding and a 3.1 cm rim-enhancing collection. No free air.",
+"impression": "Perforated appendicitis with periappendiceal abscess.",
+"technique": "Axial CT abdomen/pelvis after 100 mL IV iodinated contrast."
+},
+"status": "Reported",
+"study": "CT abdomen and pelvis with IV contrast"
+},
+{
+"acc": "ACC-77141",
+"by": "U-2004",
+"contrast": false,
+"id": "RAD-3",
+"indication": "Inversion injury. Ottawa ankle rules positive (malleolar tenderness).",
+"mOff": 30,
+"modality": "XR",
+"patient": "P16",
+"phantom": "xr",
+"priority": "Routine",
+"status": "Arrived",
+"study": "XR right ankle, 3 views"
+},
+{
+"acc": "ACC-77138",
+"by": "U-2004",
+"contrast": false,
+"id": "RAD-4",
+"indication": "STEMI, pre-cath baseline.",
+"mOff": 20,
+"modality": "XR",
+"patient": "P13",
+"phantom": "xr",
+"priority": "STAT",
+"status": "In progress",
+"study": "XR chest, portable AP"
+},
+{
+"acc": "ACC-77150",
+"by": "U-2005",
+"contrast": false,
+"id": "RAD-5",
+"indication": "Post total knee arthroplasty.",
+"mOff": 60,
+"modality": "XR",
+"patient": "P08",
+"phantom": "xr",
+"priority": "Routine",
+"status": "Scheduled",
+"study": "XR left knee, post-op, 2 views"
+},
+{
+"acc": "ACC-77152",
+"by": "U-2001",
+"contrast": true,
+"id": "RAD-6",
+"indication": "Hypoxia, rule out pulmonary embolism.",
+"mOff": 25,
+"modality": "CT",
+"patient": "P04",
+"phantom": "chest",
+"priority": "Urgent",
+"status": "Ordered",
+"study": "CT chest with IV contrast (PE protocol)"
+},
+{
+"acc": "ACC-77155",
+"by": "U-2004",
+"contrast": false,
+"id": "RAD-7",
+"indication": "RUQ pain, fever. Rule out cholecystitis.",
+"mOff": 18,
+"modality": "US",
+"patient": "P18",
+"phantom": "us",
+"priority": "Urgent",
+"status": "Ordered",
+"study": "US right upper quadrant"
+}
+],
+"reminders": [
+{
+"channel": "SMS",
+"kind": "Appointment",
+"msg": "You have an upcoming visit at Bayview. Reply C to confirm or call (415) 555-0100.",
+"patient": "P11",
+"status": "Scheduled",
+"when": "Tomorrow 09:00"
+},
+{
+"channel": "App",
+"kind": "Lab due",
+"msg": "A lab test is due. Open the Tessera app for details.",
+"patient": "P09",
+"status": "Delivered",
+"when": "Today 11:00"
+},
+{
+"channel": "App push",
+"kind": "Medication",
+"msg": "Reminder: it is time for your scheduled medication.",
+"patient": "P06",
+"status": "Delivered",
+"when": "Daily 20:00"
+},
+{
+"channel": "Email",
+"kind": "Telehealth",
+"msg": "Your video visit starts soon. Sign in to the Tessera app to join.",
+"patient": "P05",
+"status": "Opened",
+"when": "Today 09:45"
+}
+],
+"results": [
+{
+"flag": "HH",
+"id": "R-801",
+"lab": "Chemistry",
+"mOff": 52,
+"patient": "P01",
+"ref": "3.5\u20135.1",
+"slaMin": 30,
+"state": "New",
+"test": "Potassium",
+"trail": [],
+"value": "6.1 mmol/L"
+},
+{
+"flag": "HH",
+"id": "R-802",
+"lab": "Chemistry",
+"mOff": 34,
+"patient": "P02",
+"ref": "<0.04",
+"slaMin": 30,
+"state": "Acknowledged",
+"test": "Troponin I",
+"trail": [
+{
+"mOff": 27,
+"what": "Acknowledged",
+"who": "Dr. Elena Marsh"
+}
+],
+"value": "0.9 ng/mL"
+},
+{
+"flag": "HH",
+"id": "R-803",
+"lab": "Blood gas lab",
+"mOff": 96,
+"patient": "P03",
+"ref": "0.5\u20132.2",
+"slaMin": 30,
+"state": "Owned",
+"test": "Lactate",
+"trail": [
+{
+"mOff": 90,
+"what": "Acknowledged",
+"who": "Dr. Samuel Okafor"
+},
+{
+"mOff": 86,
+"what": "Took ownership \u2014 30 mL/kg fluids started",
+"who": "Dr. Samuel Okafor"
+}
+],
+"value": "4.2 mmol/L"
+},
+{
+"flag": "HH",
+"id": "R-804",
+"lab": "Coagulation",
+"mOff": 1110,
+"patient": "P01",
+"ref": "2.0\u20133.0",
+"slaMin": 30,
+"state": "Closed",
+"test": "INR",
+"trail": [
+{
+"mOff": 1100,
+"what": "Acknowledged",
+"who": "Dr. Elena Marsh"
+},
+{
+"mOff": 1080,
+"what": "Closed \u2014 warfarin held, vitamin K 2.5 mg PO",
+"who": "Dr. Elena Marsh"
+}
+],
+"value": "5.8"
+},
+{
+"flag": "A",
+"id": "R-805",
+"lab": "Microbiology",
+"mOff": 40,
+"patient": "P10",
+"ref": "Negative",
+"slaMin": 60,
+"state": "New",
+"test": "Rapid strep antigen",
+"trail": [],
+"value": "Positive"
+}
+],
+"review": {},
+"reviewSigned": null,
+"roleRequests": [],
+"rpm": [
+{
+"device": "Home BP cuff",
+"level": "warn",
+"patient": "P11",
+"provider": "U-2002",
+"reading": "158/98 mmHg, 3 days running"
+},
+{
+"device": "Glucometer",
+"level": "crit",
+"patient": "P09",
+"provider": "U-2002",
+"reading": "Fasting glucose 288 mg/dL"
+},
+{
+"device": "Wearable ECG patch",
+"level": "warn",
+"patient": "P05",
+"provider": "U-2001",
+"reading": "HR 162 for 11 minutes at 02:14"
+}
+],
+"rrEvents": [],
+"sdoh": [
+{
+"answers": {
+"food": true,
+"housing": false,
+"safety": false,
+"transport": true,
+"utilities": false
+},
+"at": "2026-11-07T02:21:22.897Z",
+"by": "Dr. Samuel Okafor",
+"dOff": -21,
+"patient": "P09"
+},
+{
+"answers": {
+"food": false,
+"housing": false,
+"safety": false,
+"transport": false,
+"utilities": false
+},
+"at": "2026-09-29T02:21:22.897Z",
+"by": "Front desk intake",
+"dOff": -60,
+"patient": "P11"
+}
+],
+"sdohRefs": [
+{
+"at": "2026-11-10T02:21:22.897Z",
+"domain": "food",
+"id": "SR-1",
+"org": "East Bay Food Pantry Network (fictional)",
+"patient": "P09",
+"status": "Service delivered"
+},
+{
+"at": "2026-11-08T02:21:22.898Z",
+"domain": "transport",
+"id": "SR-2",
+"org": "MediRide non-emergency transport (fictional)",
+"patient": "P09",
+"status": "Sent"
+}
+],
+"shareLog": [],
+"shares": [],
+"supportReq": [],
+"tele": [
+{
+"id": "TM-1",
+"mins": 20,
+"patient": "P05",
+"provider": "U-2001",
+"reason": "Holter results review",
+"status": "In session",
+"when": "Today 10:00"
+},
+{
+"id": "TM-2",
+"mins": 15,
+"patient": "P06",
+"provider": "U-2002",
+"reason": "Asthma action plan check",
+"status": "Waiting room",
+"when": "Today 14:30"
+},
+{
+"id": "TM-3",
+"mins": 20,
+"patient": "P09",
+"provider": "U-2002",
+"reason": "Foot wound photo review",
+"status": "Completed",
+"when": "Today 09:00"
+},
+{
+"id": "TM-4",
+"mins": 15,
+"patient": "P11",
+"provider": "U-2002",
+"reason": "BP follow-up after missed visit",
+"status": "Scheduled",
+"when": "Tomorrow 09:30"
+},
+{
+"id": "TM-5",
+"mins": 20,
+"patient": "P07",
+"provider": "U-2001",
+"reason": "Post-op cardiology check",
+"status": "Scheduled",
+"when": "In 7 days"
+}
+],
+"tenants": [
+{
+"backupTested": -6,
+"health": "Healthy",
+"id": "bayview",
+"keyRotated": -38,
+"name": "Bayview Regional Medical Center",
+"region": "us-west-2",
+"users": 19,
+"version": "2026.11.3"
+},
+{
+"backupTested": -40,
+"health": "Healthy",
+"id": "sierra",
+"keyRotated": -350,
+"name": "Sierra Foothills Community Hospital",
+"region": "us-west-2",
+"users": 212,
+"version": "2026.11.3"
+},
+{
+"backupTested": -12,
+"health": "Degraded: report service latency",
+"id": "coastal",
+"keyRotated": -90,
+"name": "Coastal Pediatrics Network",
+"region": "us-east-1",
+"users": 86,
+"version": "2026.11.2"
+}
+],
+"todos": {},
+"users": [
+{
+"id": "U-1001",
+"lastSignIn": -1,
+"mfa": "Security key",
+"name": "Dana Whitfield",
+"role": "admin",
+"status": "active",
+"title": "Tenant administrator",
+"username": "dana.admin"
+},
+{
+"id": "U-1002",
+"lastSignIn": -3,
+"mfa": "Authenticator app",
+"name": "Leo Brandt",
+"role": "admin",
+"status": "active",
+"title": "Tenant administrator (second approver)",
+"username": "leo.admin"
+},
+{
+"dept": "CARD",
+"id": "U-2001",
+"lastSignIn": 0,
+"mfa": "Security key",
+"name": "Dr. Elena Marsh",
+"role": "doctor",
+"status": "active",
+"title": "Attending, Cardiology",
+"username": "elena.cardio"
+},
+{
+"dept": "GMED",
+"id": "U-2002",
+"lastSignIn": 0,
+"mfa": "Authenticator app",
+"name": "Dr. Samuel Okafor",
+"role": "doctor",
+"status": "active",
+"title": "Attending, General Medicine",
+"username": "samuel.gmed"
+},
+{
+"id": "U-3001",
+"lastSignIn": 0,
+"mfa": "Badge tap + PIN",
+"name": "Grace Lin, RN",
+"role": "nurse",
+"status": "active",
+"title": "Charge nurse, Cardiac ICU",
+"unit": "CICU",
+"username": "grace.rn"
+},
+{
+"id": "U-4001",
+"lastSignIn": 0,
+"mfa": "Authenticator app",
+"name": "Nadia Kowal, PharmD",
+"role": "pharmacist",
+"status": "active",
+"title": "Clinical pharmacist",
+"username": "nadia.pharm"
+},
+{
+"id": "U-5001",
+"lastSignIn": -1,
+"mfa": "Authenticator app",
+"name": "Marcus Bell",
+"role": "billing",
+"status": "active",
+"title": "Revenue cycle specialist",
+"username": "marcus.billing"
+},
+{
+"id": "U-6001",
+"lastSignIn": -2,
+"mfa": "Authenticator app",
+"name": "Tom\u00e1s Reyes",
+"role": "quality",
+"status": "active",
+"title": "Quality & HEDIS analyst",
+"username": "tomas.quality"
+},
+{
+"dept": "PEDS",
+"id": "U-2003",
+"lastSignIn": -48,
+"mfa": "Not enrolled",
+"name": "Dr. Ruth Adeyemi",
+"role": "doctor",
+"status": "suspended",
+"title": "Attending, Pediatrics",
+"username": "ruth.peds"
+},
+{
+"dept": "EMER",
+"id": "U-2004",
+"lastSignIn": 0,
+"mfa": "Security key",
+"name": "Dr. Farid Haddad",
+"role": "doctor",
+"status": "active",
+"title": "Attending, Emergency Medicine",
+"username": "farid.er"
+},
+{
+"dept": "SURG",
+"id": "U-2005",
+"lastSignIn": 0,
+"mfa": "Security key",
+"name": "Dr. Caroline Weiss",
+"role": "doctor",
+"status": "active",
+"title": "Attending, General Surgery",
+"username": "caroline.surgery"
+},
+{
+"id": "U-3002",
+"lastSignIn": 0,
+"mfa": "Badge tap + PIN",
+"name": "Jamal Rivers, RN",
+"role": "nurse",
+"status": "active",
+"title": "Peri-operative & day care nurse",
+"unit": "PERIOP",
+"username": "jamal.periop"
+},
+{
+"id": "U-7001",
+"lastSignIn": 0,
+"mfa": "Authenticator app",
+"name": "Sofia Alvarez",
+"role": "receptionist",
+"status": "active",
+"title": "Front desk & admissions",
+"username": "sofia.frontdesk"
+},
+{
+"id": "U-7101",
+"lastSignIn": 0,
+"mfa": "Badge tap + PIN",
+"name": "Ben Okoro, MLS",
+"role": "lab",
+"status": "active",
+"title": "Medical laboratory scientist",
+"username": "ben.lab"
+},
+{
+"id": "U-7102",
+"lastSignIn": -1,
+"mfa": "Security key",
+"name": "Dr. Hannah Cho",
+"role": "pathologist",
+"status": "active",
+"title": "Pathologist, lab director",
+"username": "hannah.path"
+},
+{
+"id": "U-7201",
+"lastSignIn": 0,
+"mfa": "Security key",
+"name": "Dr. Victor Lund",
+"role": "radiologist",
+"status": "active",
+"title": "Attending radiologist",
+"username": "victor.rad"
+},
+{
+"id": "U-5002",
+"lastSignIn": -1,
+"mfa": "Authenticator app",
+"name": "Rita Gomez",
+"role": "insurance",
+"status": "active",
+"title": "Insurance & pre-authorization desk",
+"username": "rita.insurance"
+},
+{
+"id": "U-8001",
+"lastSignIn": -2,
+"mfa": "Security key",
+"name": "Catherine Moore",
+"role": "executive",
+"status": "active",
+"title": "Chief executive officer",
+"username": "catherine.ceo"
+},
+{
+"id": "U-9001",
+"lastSignIn": -5,
+"mfa": "Authenticator app",
+"name": "Radha Bhatt",
+"patientId": "P08",
+"role": "patient",
+"status": "active",
+"title": "Patient portal",
+"username": "radha.patient"
+},
+{
+"id": "U-9901",
+"lastSignIn": 0,
+"mfa": "Security key",
+"name": "Noah Kim",
+"role": "platform",
+"status": "active",
+"title": "Platform reliability engineer",
+"username": "noah.platform"
+}
+],
+"verified": {},
+"vitalsLog": {},
+"workOrders": []
+},
+"unitGroups": {
+"PERIOP": [
+"PACU",
+"DAYC"
+]
+}
+}
